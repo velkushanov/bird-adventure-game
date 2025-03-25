@@ -7,6 +7,14 @@
     <link rel="stylesheet" href="css/style.css">
     <!-- Phaser 3 Library -->
     <script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.min.js"></script>
+    <!-- Firebase App (the core Firebase SDK) -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js"></script>
+    <!-- Firebase Authentication -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js"></script>
+    <!-- Firebase Database -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js"></script>
+    <!-- Firebase Realtime Database for multiplayer -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js"></script>
 </head>
 <body>
     <div id="game-container">
@@ -21,7 +29,40 @@
             <div class="auth-buttons">
                 <button id="login-google" class="auth-button google">Login with Google</button>
                 <button id="login-facebook" class="auth-button facebook">Login with Facebook</button>
-                <button id="play-as-guest" class="auth-button guest">Play as Guest</button>
+                <button id="login-instagram" class="auth-button instagram">Login with Instagram</button>
+            </div>
+            <div class="guest-option">
+                <button id="play-as-guest">Play as Guest</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Character Selection Modal -->
+    <div id="character-modal" class="modal">
+        <div class="modal-content">
+            <h2>Select Your Bird</h2>
+            <div class="character-grid">
+                <!-- Character options will be added by JavaScript -->
+            </div>
+            <button id="start-game" class="button">Start Game</button>
+        </div>
+    </div>
+    
+    <!-- Game Over Modal -->
+    <div id="gameover-modal" class="modal">
+        <div class="modal-content">
+            <h2>Game Over</h2>
+            <div id="final-score"></div>
+            <div id="high-score"></div>
+            <div class="leaderboard-preview">
+                <h3>Top Scores</h3>
+                <div id="leaderboard-list">
+                    <!-- Top scores will be added by JavaScript -->
+                </div>
+            </div>
+            <div class="gameover-buttons">
+                <button id="restart-game" class="button">Play Again</button>
+                <button id="view-leaderboard" class="button">View Full Leaderboard</button>
             </div>
         </div>
     </div>
@@ -36,15 +77,24 @@
         </div>
     </div>
     
-    <!-- Firebase Scripts -->
-    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js" type="module"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth.js" type="module"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore.js" type="module"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database.js" type="module"></script>
-    
     <!-- Game Scripts -->
-    <script type="module" src="js/config.js"></script>
-    <script type="module" src="js/utils/firebase.js"></script>
-    <script type="module" src="js/main.js"></script>
+    <script src="js/config.js"></script>
+    <script src="js/utils/firebase.js"></script>
+    <script src="js/utils/auth.js"></script>
+    <script src="js/utils/leaderboard.js"></script>
+    <script src="js/utils/multiplayer.js"></script>
+    <script src="js/objects/bird.js"></script>
+    <script src="js/objects/obstacle.js"></script>
+    <script src="js/objects/enemy.js"></script>
+    <script src="js/objects/powerup.js"></script>
+    <script src="js/objects/background.js"></script>
+    <script src="js/scenes/boot.js"></script>
+    <script src="js/scenes/preloader.js"></script>
+    <script src="js/scenes/mainmenu.js"></script>
+    <script src="js/scenes/characterselect.js"></script>
+    <script src="js/scenes/game.js"></script>
+    <script src="js/scenes/leaderboard.js"></script>
+    <script src="js/scenes/multiplayer.js"></script>
+    <script src="js/main.js"></script>
 </body>
 </html>
