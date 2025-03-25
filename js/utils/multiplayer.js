@@ -62,7 +62,12 @@ function createMultiplayerRoom() {
                 ready: false,
                 character: '',
                 host: true,
-                joinedAt: Date.now()
+                joinedAt: Date.now(),
+                position: {
+                    x: CONFIG.BIRD_START_X,
+                    y: CONFIG.BIRD_START_Y,
+                    timestamp: Date.now()
+                }
             };
             
             // Create a new room with a unique ID
@@ -161,13 +166,18 @@ function joinMultiplayerRoom(roomId) {
                     throw new Error('Room is full');
                 }
                 
-                // Add player to room
+                // Add player to room with initial position
                 return window.firebase.database().ref(`rooms/${roomId}/players/${user.uid}`).set({
                     name: user.displayName || 'Player',
                     ready: false,
                     character: '',
                     host: false,
-                    joinedAt: Date.now()
+                    joinedAt: Date.now(),
+                    position: {
+                        x: CONFIG.BIRD_START_X,
+                        y: CONFIG.BIRD_START_Y,
+                        timestamp: Date.now()
+                    }
                 });
             })
             .then(() => {
@@ -234,6 +244,7 @@ function leaveMultiplayerRoom() {
                                 
                                 return Promise.all([
                                     window.firebase.database().ref(`rooms/${currentRoom}/host`).set(newHostId),
+                                    window.firebase.database().ref(`rooms/${currentRoom}/hostName`).set(players[newHostId].name),
                                     window.firebase.database().ref(`rooms/${currentRoom}/players/${newHostId}/host`).set(true)
                                 ]);
                             }
@@ -492,7 +503,8 @@ function listenToRoomChanges(callback) {
  * @param {Phaser.Physics.Arcade.Sprite} bird - Player bird sprite
  */
 function startMultiplayerSync(bird) {
-    if (!currentRoom || !isAuthenticated()) {
+    if (!currentRoom || !isAuthenticated() || !bird) {
+        console.error("Cannot start multiplayer sync: missing requirements");
         return;
     }
     
@@ -503,25 +515,37 @@ function startMultiplayerSync(bird) {
         clearInterval(playerUpdateInterval);
     }
     
-    // Update position every 100ms
+    console.log("Starting position sync for multiplayer");
+    
+    // Update position every 50ms (more frequent updates for smoother gameplay)
     playerUpdateInterval = setInterval(() => {
-        if (!currentRoom) {
-            // Stop syncing if no longer in a room
+        if (!currentRoom || !bird || !bird.active) {
+            // Stop syncing if no longer valid
             clearInterval(playerUpdateInterval);
             playerUpdateInterval = null;
             return;
         }
         
         try {
-            window.firebase.database().ref(`rooms/${currentRoom}/players/${user.uid}/position`).set({
-                x: bird.x,
-                y: bird.y,
-                timestamp: Date.now()
-            });
+            // Only update if the bird is still alive
+            if (!bird.isDead) {
+                const position = {
+                    x: bird.x,
+                    y: bird.y,
+                    rotation: bird.rotation,
+                    scale: bird.scale,
+                    tint: bird.tintTopLeft || 0xffffff, // Store tint for visual effects
+                    timestamp: Date.now()
+                };
+                
+                window.firebase.database().ref(`rooms/${currentRoom}/players/${user.uid}/position`).update(position);
+            }
         } catch (error) {
             console.error("Error updating player position:", error);
         }
-    }, 100);
+    }, 50); // More frequent updates
+
+    console.log("Multiplayer position sync started");
 }
 
 /**
@@ -531,6 +555,7 @@ function stopMultiplayerSync() {
     if (playerUpdateInterval) {
         clearInterval(playerUpdateInterval);
         playerUpdateInterval = null;
+        console.log("Multiplayer position sync stopped");
     }
 }
 
@@ -545,8 +570,12 @@ function listenToPlayerPositions(callback) {
     }
     
     try {
-        // Set up listener for player positions
+        console.log("Setting up player positions listener");
+        
+        // Set up listener for player positions - More efficient approach
+        // Only listen to the players node to reduce unnecessary data transfer
         const playersRef = window.firebase.database().ref(`rooms/${currentRoom}/players`);
+        
         const onPlayersChange = playersRef.on('value', snapshot => {
             const players = snapshot.val() || {};
             const positions = {};
@@ -574,6 +603,8 @@ function listenToPlayerPositions(callback) {
         firebaseListeners.push({
             off: () => playersRef.off('value', onPlayersChange)
         });
+        
+        console.log("Player positions listener established");
         
         // Return function to stop listening
         return () => {

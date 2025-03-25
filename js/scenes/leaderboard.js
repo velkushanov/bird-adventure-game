@@ -51,6 +51,14 @@ class LeaderboardScene extends Phaser.Scene {
         
         // Load player's high score if logged in
         this.loadPlayerHighScore();
+        
+        // Play menu music if not already playing
+        if (!this.sound.get('music-menu')) {
+            this.sound.play('music-menu', {
+                loop: true,
+                volume: 0.7
+            });
+        }
     }
     
     update() {
@@ -128,6 +136,19 @@ class LeaderboardScene extends Phaser.Scene {
         bg.on('pointerdown', () => {
             this.setActiveTab(tabId);
             this.loadScores(tabId);
+        });
+        
+        // Add hover effect
+        bg.on('pointerover', () => {
+            if (tabId !== this.currentTab) {
+                bg.setFillStyle(0x333333, 0.7);
+            }
+        });
+        
+        bg.on('pointerout', () => {
+            if (tabId !== this.currentTab) {
+                bg.setFillStyle(0x000000, 0.5);
+            }
         });
         
         return tab;
@@ -208,8 +229,14 @@ class LeaderboardScene extends Phaser.Scene {
         // Get scores from Firebase
         getTopScores(20, timeframe)
             .then(scores => {
-                this.scores = scores;
-                this.displayScores();
+                if (Array.isArray(scores)) {
+                    console.log(`Loaded ${scores.length} scores for ${timeframe} timeframe`);
+                    this.scores = scores;
+                    this.displayScores();
+                } else {
+                    console.error('Invalid scores data returned:', scores);
+                    this.showError('Error loading scores. Invalid data format.');
+                }
             })
             .catch(error => {
                 console.error('Error loading scores:', error);
@@ -224,12 +251,28 @@ class LeaderboardScene extends Phaser.Scene {
         if (isAuthenticated()) {
             getUserHighScore()
                 .then(highScore => {
-                    this.createHighScoreDisplay(highScore);
+                    if (typeof highScore === 'number') {
+                        this.createHighScoreDisplay(highScore);
+                    } else {
+                        console.error('Invalid high score value:', highScore);
+                        this.createHighScoreDisplay(0);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error getting user high score:', error);
+                    this.createHighScoreDisplay(0);
                 });
         } else if (localStorage.getItem('highScore')) {
             // For guest players, get from local storage
-            const highScore = parseInt(localStorage.getItem('highScore')) || 0;
-            this.createHighScoreDisplay(highScore);
+            try {
+                const highScore = parseInt(localStorage.getItem('highScore')) || 0;
+                this.createHighScoreDisplay(highScore);
+            } catch (error) {
+                console.error('Error parsing local high score:', error);
+                this.createHighScoreDisplay(0);
+            }
+        } else {
+            this.createHighScoreDisplay(0);
         }
     }
     
@@ -282,7 +325,7 @@ class LeaderboardScene extends Phaser.Scene {
         this.scoresContainer.removeAll(true);
         
         // Check if we have scores
-        if (this.scores.length === 0) {
+        if (!this.scores || this.scores.length === 0) {
             this.showEmptyState();
             return;
         }
@@ -364,7 +407,7 @@ class LeaderboardScene extends Phaser.Scene {
             .setOrigin(0.5);
             
         // Highlight current user's score
-        if (isAuthenticated() && score.userId === getCurrentUser().uid) {
+        if (isAuthenticated() && score.userId && score.userId === getCurrentUser().uid) {
             bg.setStrokeStyle(2, 0xffff00);
         }
         
@@ -377,20 +420,22 @@ class LeaderboardScene extends Phaser.Scene {
         }).setOrigin(0.5);
         
         // Player column
-        const playerText = this.add.text(CONFIG.GAME_WIDTH / 2 - 50, 0, score.name, {
+        let playerName = score.name || 'Unknown Player';
+        // Truncate long names
+        if (playerName.length > 15) {
+            playerName = playerName.substring(0, 15) + '...';
+        }
+        
+        const playerText = this.add.text(CONFIG.GAME_WIDTH / 2 - 50, 0, playerName, {
             fontFamily: 'Arial',
             fontSize: '16px',
             color: '#ffffff',
             align: 'center'
         }).setOrigin(0.5);
         
-        // Truncate long names
-        if (playerText.width > 250) {
-            playerText.setText(score.name.substring(0, 15) + '...');
-        }
-        
         // Score column
-        const scoreText = this.add.text(CONFIG.GAME_WIDTH / 2 + 150, 0, score.score.toString(), {
+        const scoreValue = score.score || 0;
+        const scoreText = this.add.text(CONFIG.GAME_WIDTH / 2 + 150, 0, scoreValue.toString(), {
             fontFamily: 'Arial',
             fontSize: '16px',
             color: '#ffffff',
@@ -398,12 +443,43 @@ class LeaderboardScene extends Phaser.Scene {
         }).setOrigin(0.5);
         
         // Date column
-        const dateText = this.add.text(CONFIG.GAME_WIDTH / 2 + 280, 0, this.formatDate(score.timestamp), {
-            fontFamily: 'Arial',
-            fontSize: '16px',
-            color: '#aaaaaa',
-            align: 'center'
-        }).setOrigin(0.5);
+        let dateText;
+        if (score.timestamp) {
+            let dateStr;
+            try {
+                // Handle different timestamp formats
+                if (score.timestamp instanceof Date) {
+                    dateStr = this.formatDate(score.timestamp);
+                } else if (score.timestamp.seconds) {
+                    // Firestore timestamp
+                    const date = new Date(score.timestamp.seconds * 1000);
+                    dateStr = this.formatDate(date);
+                } else if (typeof score.timestamp === 'number') {
+                    // Unix timestamp
+                    const date = new Date(score.timestamp);
+                    dateStr = this.formatDate(date);
+                } else {
+                    dateStr = 'Unknown';
+                }
+            } catch (error) {
+                console.error('Error formatting date:', error);
+                dateStr = 'Error';
+            }
+            
+            dateText = this.add.text(CONFIG.GAME_WIDTH / 2 + 280, 0, dateStr, {
+                fontFamily: 'Arial',
+                fontSize: '16px',
+                color: '#aaaaaa',
+                align: 'center'
+            }).setOrigin(0.5);
+        } else {
+            dateText = this.add.text(CONFIG.GAME_WIDTH / 2 + 280, 0, 'Unknown', {
+                fontFamily: 'Arial',
+                fontSize: '16px',
+                color: '#aaaaaa',
+                align: 'center'
+            }).setOrigin(0.5);
+        }
         
         // Add to row
         row.add([bg, rankText, playerText, scoreText, dateText]);
@@ -454,11 +530,36 @@ class LeaderboardScene extends Phaser.Scene {
         const errorText = this.add.text(CONFIG.GAME_WIDTH / 2, 250, message, {
             fontFamily: 'Arial',
             fontSize: '20px',
-            color: '#ff0000',
+            color: '#ff6666',
             align: 'center'
         }).setOrigin(0.5);
         
-        this.scoresContainer.add(errorText);
+        // Add a retry button
+        const retryButton = this.add.rectangle(
+            CONFIG.GAME_WIDTH / 2,
+            320,
+            200,
+            40,
+            0x3498db,
+            0.8
+        ).setInteractive();
+        
+        const retryText = this.add.text(
+            CONFIG.GAME_WIDTH / 2,
+            320,
+            'Retry',
+            {
+                fontFamily: 'Arial',
+                fontSize: '18px',
+                color: '#ffffff'
+            }
+        ).setOrigin(0.5);
+        
+        retryButton.on('pointerdown', () => {
+            this.loadScores(this.currentTab);
+        });
+        
+        this.scoresContainer.add([errorText, retryButton, retryText]);
     }
     
     /**
@@ -481,7 +582,29 @@ class LeaderboardScene extends Phaser.Scene {
     formatDate(date) {
         if (!date) return 'Unknown';
         
-        // Format as MM/DD/YYYY
-        return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()}`;
+        try {
+            // Format as MM/DD/YYYY
+            return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()}`;
+        } catch (error) {
+            console.error('Error formatting date:', error);
+            return 'Invalid Date';
+        }
+    }
+    
+    /**
+     * Clean up resources when scene is shut down
+     */
+    shutdown() {
+        // Kill all tweens
+        this.tweens.killAll();
+        
+        // Remove all event listeners
+        this.input.keyboard.shutdown();
+        
+        // Stop all sounds
+        this.sound.stopAll();
+        
+        // Call parent shutdown
+        super.shutdown();
     }
 }

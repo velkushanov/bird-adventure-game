@@ -59,6 +59,9 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
         // Trail effect (initially hidden)
         this.trail = scene.add.particles('particle');
         this.trailEmitter = null;
+        
+        // Fireball cooldown
+        this.lastFireballTime = 0;
     }
     
     /**
@@ -480,28 +483,52 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
     
     /**
      * Shoot a fireball
-     * @returns {Phaser.GameObjects.Sprite} The created fireball
+     * @returns {Phaser.GameObjects.Sprite} The created fireball or null if can't shoot
      */
     shootFireball() {
         if (!this.isShooting || this.isDead) return null;
         
-        // Create fireball
+        // Implement cooldown to prevent too many fireballs (fixes crash)
+        const currentTime = this.scene.time.now;
+        if (currentTime - this.lastFireballTime < CONFIG.FIREBALL_RATE) {
+            return null;
+        }
+        
+        // Update last fireball time
+        this.lastFireballTime = currentTime;
+        
+        // Create fireball with proper physics setup
         const fireball = this.scene.physics.add.sprite(
             this.x + this.width / 2,
             this.y,
             'fireball'
         );
         
-        // Configure fireball physics
+        // Configure fireball physics (improved setup)
         fireball.body.allowGravity = false;
         fireball.setVelocityX(CONFIG.FIREBALL_SPEED);
         
-        // Add rotation animation
+        // Set a proper collision size
+        fireball.body.setSize(fireball.width * 0.8, fireball.height * 0.8);
+        
+        // Add a lifespan to ensure fireballs don't stay forever
+        this.scene.time.delayedCall(5000, () => {
+            if (fireball && fireball.active) {
+                fireball.destroy();
+            }
+        });
+        
+        // Add rotation animation via tweens
         this.scene.tweens.add({
             targets: fireball,
             angle: 360,
             duration: 1000,
-            repeat: -1
+            repeat: -1,
+            onComplete: function() {
+                if (fireball && fireball.active) {
+                    fireball.destroy();
+                }
+            }
         });
         
         // Play sound

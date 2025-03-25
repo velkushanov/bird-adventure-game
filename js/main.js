@@ -96,7 +96,10 @@ function initGame() {
         
         // Update progress bar during asset loading
         gameInstance.events.on('progress', function(value) {
-            document.querySelector('.progress').style.width = Math.floor(value * 100) + '%';
+            const progressBar = document.querySelector('.progress');
+            if (progressBar) {
+                progressBar.style.width = Math.floor(value * 100) + '%';
+            }
         });
         
         // Game start time for diagnostics
@@ -276,8 +279,6 @@ function setupModalButtons() {
         if (playAsGuestBtn) {
             playAsGuestBtn.addEventListener('click', function() {
                 playAsGuest();
-                document.getElementById('auth-modal').style.display = 'none';
-                document.getElementById('character-modal').style.display = 'block';
             });
         }
         
@@ -333,52 +334,83 @@ function populateCharacterSelection() {
     
     grid.innerHTML = ''; // Clear existing content
     
-    // Add each character option
-    CONFIG.CHARACTERS.forEach(character => {
-        const charDiv = document.createElement('div');
-        charDiv.className = 'character-option';
-        charDiv.setAttribute('data-id', character.id);
-        
-        // Create character preview
-        const img = document.createElement('div');
-        img.className = 'character-image';
-        img.style.backgroundImage = `url(${CONFIG.ASSET_PATH}characters/${character.texture}.png)`;
-        
-        const name = document.createElement('div');
-        name.className = 'character-name';
-        name.textContent = character.name;
-        
-        charDiv.appendChild(img);
-        charDiv.appendChild(name);
-        
-        // Add selection functionality
-        charDiv.addEventListener('click', function() {
-            // Remove selected class from all options
-            document.querySelectorAll('.character-option').forEach(element => {
-                element.classList.remove('selected');
+    // Add each character option from CONFIG
+    if (CONFIG && CONFIG.CHARACTERS) {
+        CONFIG.CHARACTERS.forEach(character => {
+            const charDiv = document.createElement('div');
+            charDiv.className = 'character-option';
+            charDiv.setAttribute('data-id', character.id);
+            
+            // Create character preview with proper path
+            const img = document.createElement('div');
+            img.className = 'character-image';
+            img.style.backgroundImage = `url(${CONFIG.ASSET_PATH}characters/${character.texture}.png)`;
+            
+            const name = document.createElement('div');
+            name.className = 'character-name';
+            name.textContent = character.name;
+            
+            charDiv.appendChild(img);
+            charDiv.appendChild(name);
+            
+            // Add selection functionality
+            charDiv.addEventListener('click', function() {
+                // Remove selected class from all options
+                document.querySelectorAll('.character-option').forEach(element => {
+                    element.classList.remove('selected');
+                });
+                
+                // Add selected class to clicked option
+                this.classList.add('selected');
             });
             
-            // Add selected class to clicked option
-            this.classList.add('selected');
+            grid.appendChild(charDiv);
         });
+    } else {
+        console.error('CONFIG.CHARACTERS not available for character selection');
         
-        grid.appendChild(charDiv);
-    });
+        // Fallback if CONFIG is not available
+        const fallbackMessage = document.createElement('div');
+        fallbackMessage.textContent = 'Character data not available. Please refresh the page.';
+        fallbackMessage.style.color = 'white';
+        fallbackMessage.style.padding = '20px';
+        grid.appendChild(fallbackMessage);
+    }
 }
 
 /**
  * Shows the authentication modal
  */
 function showAuthModal() {
-    document.getElementById('auth-modal').style.display = 'block';
+    const authModal = document.getElementById('auth-modal');
+    if (authModal) {
+        authModal.style.display = 'block';
+    } else {
+        console.error('Auth modal element not found');
+    }
 }
 
 /**
  * Shows the character selection modal
  */
 function showCharacterModal() {
-    populateCharacterSelection();
-    document.getElementById('character-modal').style.display = 'block';
+    try {
+        populateCharacterSelection();
+        const characterModal = document.getElementById('character-modal');
+        if (characterModal) {
+            // First hide any other potentially open modals
+            document.querySelectorAll('.modal').forEach(modal => {
+                modal.style.display = 'none';
+            });
+            
+            // Then show character modal
+            characterModal.style.display = 'block';
+        } else {
+            console.error('Character modal element not found');
+        }
+    } catch (error) {
+        console.error('Error showing character modal:', error);
+    }
 }
 
 /**
@@ -387,56 +419,66 @@ function showCharacterModal() {
  * @param {number} highScore - The player's high score
  */
 function showGameOverModal(score, highScore) {
-    // Update score displays
-    const finalScoreEl = document.getElementById('final-score');
-    const highScoreEl = document.getElementById('high-score');
-    
-    if (finalScoreEl) finalScoreEl.textContent = `Your Score: ${score}`;
-    if (highScoreEl) highScoreEl.textContent = `Your High Score: ${highScore}`;
-    
-    // Update leaderboard preview
-    getTopScores(5).then(scores => {
-        const leaderboardList = document.getElementById('leaderboard-list');
-        if (!leaderboardList) return;
+    try {
+        // Update score displays
+        const finalScoreEl = document.getElementById('final-score');
+        const highScoreEl = document.getElementById('high-score');
         
-        leaderboardList.innerHTML = '';
+        if (finalScoreEl) finalScoreEl.textContent = `Your Score: ${score}`;
+        if (highScoreEl) highScoreEl.textContent = `Your High Score: ${highScore}`;
         
-        if (scores && scores.length > 0) {
-            scores.forEach((entry, index) => {
-                const item = document.createElement('div');
-                item.className = 'leaderboard-item';
-                
-                const rank = document.createElement('div');
-                rank.className = 'rank';
-                rank.textContent = `#${index + 1}`;
-                
-                const name = document.createElement('div');
-                name.className = 'player-name';
-                name.textContent = entry.name;
-                
-                const scoreElement = document.createElement('div');
-                scoreElement.className = 'score';
-                scoreElement.textContent = entry.score;
-                
-                item.appendChild(rank);
-                item.appendChild(name);
-                item.appendChild(scoreElement);
-                
-                leaderboardList.appendChild(item);
-            });
+        // Update leaderboard preview
+        getTopScores(5).then(scores => {
+            const leaderboardList = document.getElementById('leaderboard-list');
+            if (!leaderboardList) return;
+            
+            leaderboardList.innerHTML = '';
+            
+            if (scores && scores.length > 0) {
+                scores.forEach((entry, index) => {
+                    const item = document.createElement('div');
+                    item.className = 'leaderboard-item';
+                    
+                    const rank = document.createElement('div');
+                    rank.className = 'rank';
+                    rank.textContent = `#${index + 1}`;
+                    
+                    const name = document.createElement('div');
+                    name.className = 'player-name';
+                    name.textContent = entry.name || 'Unknown';
+                    
+                    const scoreElement = document.createElement('div');
+                    scoreElement.className = 'score';
+                    scoreElement.textContent = entry.score || 0;
+                    
+                    item.appendChild(rank);
+                    item.appendChild(name);
+                    item.appendChild(scoreElement);
+                    
+                    leaderboardList.appendChild(item);
+                });
+            } else {
+                leaderboardList.innerHTML = '<p>No leaderboard entries yet!</p>';
+            }
+        }).catch(error => {
+            console.error('Error fetching leaderboard:', error);
+            
+            const leaderboardList = document.getElementById('leaderboard-list');
+            if (leaderboardList) {
+                leaderboardList.innerHTML = '<p>Could not load leaderboard. Please try again later.</p>';
+            }
+        });
+        
+        // Show the modal
+        const gameoverModal = document.getElementById('gameover-modal');
+        if (gameoverModal) {
+            gameoverModal.style.display = 'block';
         } else {
-            leaderboardList.innerHTML = '<p>No leaderboard entries yet!</p>';
+            console.error('Game over modal element not found');
         }
-    }).catch(error => {
-        console.error('Error fetching leaderboard:', error);
-        
-        const leaderboardList = document.getElementById('leaderboard-list');
-        if (leaderboardList) {
-            leaderboardList.innerHTML = '<p>Could not load leaderboard. Please try again later.</p>';
-        }
-    });
-    
-    document.getElementById('gameover-modal').style.display = 'block';
+    } catch (error) {
+        console.error('Error showing game over modal:', error);
+    }
 }
 
 /**
@@ -444,33 +486,61 @@ function showGameOverModal(score, highScore) {
  * @param {string} characterId - The ID of the selected character
  */
 function startGame(characterId) {
-    // Get the current scene
-    const currentScene = window.game.scene.getScenes(true)[0];
+    if (!characterId) {
+        console.error('No character ID provided to startGame');
+        return;
+    }
     
-    // Start the game scene
-    currentScene.scene.start('GameScene', { characterId: characterId });
+    try {
+        // Get the current scene
+        const currentScene = gameInstance.scene.getScenes(true)[0];
+        
+        // Start the actual game scene
+        console.log(`Starting game with character: ${characterId}`);
+        currentScene.scene.start('GameScene', { characterId: characterId });
+    } catch (error) {
+        console.error('Error starting game:', error);
+        
+        // Fallback method - if the scene transition fails, try to refresh the page
+        alert('Error starting the game. The page will refresh to fix this issue.');
+        location.reload();
+    }
 }
 
 /**
  * Restarts the game
  */
 function restartGame() {
-    // Get the current scene
-    const currentScene = window.game.scene.getScenes(true)[0];
-    
-    // Go to character selection
-    currentScene.scene.start('CharacterSelectScene');
+    try {
+        // Get the current scene
+        const currentScene = gameInstance.scene.getScenes(true)[0];
+        
+        // Go to character selection
+        currentScene.scene.start('CharacterSelectScene');
+    } catch (error) {
+        console.error('Error restarting game:', error);
+        
+        // Fallback - show character modal directly
+        showCharacterModal();
+    }
 }
 
 /**
  * Shows the full leaderboard screen
  */
 function viewLeaderboard() {
-    // Get the current scene
-    const currentScene = window.game.scene.getScenes(true)[0];
-    
-    // Go to leaderboard scene
-    currentScene.scene.start('LeaderboardScene');
+    try {
+        // Get the current scene
+        const currentScene = gameInstance.scene.getScenes(true)[0];
+        
+        // Go to leaderboard scene
+        currentScene.scene.start('LeaderboardScene');
+    } catch (error) {
+        console.error('Error showing leaderboard:', error);
+        
+        // Fallback - alert user
+        alert('Error showing leaderboard. Please try again later.');
+    }
 }
 
 /**
@@ -482,7 +552,7 @@ function viewLeaderboard() {
  */
 function transitionToScene(fromScene, toScene, data = {}, fadeTransition = true) {
     // Get the current scene
-    const currentSceneObject = window.game.scene.getScene(fromScene);
+    const currentSceneObject = gameInstance.scene.getScene(fromScene);
     
     if (!currentSceneObject) {
         console.error(`Could not find scene: ${fromScene}`);
@@ -569,15 +639,15 @@ function cleanupGameResources(scene) {
  * Global cleanup function to ensure proper scene transitions
  */
 function cleanupGameScenes() {
-    if (!window.game || !window.game.scene) return;
+    if (!gameInstance || !gameInstance.scene) return;
     
     // Stop all running tweens
-    if (window.game.tweens) {
-        window.game.tweens.killAll();
+    if (gameInstance.tweens) {
+        gameInstance.tweens.killAll();
     }
     
     // Make sure no invisible blocking elements remain
-    const activeScenes = window.game.scene.getScenes(true);
+    const activeScenes = gameInstance.scene.getScenes(true);
     activeScenes.forEach(scene => {
         // Remove any full-screen rectangles that might block input
         scene.children.getAll().forEach(child => {

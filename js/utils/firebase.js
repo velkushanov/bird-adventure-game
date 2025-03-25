@@ -103,7 +103,13 @@ function initializeFirebase() {
                     let query = window.firebase.firestore().collection(collection);
                     
                     constraints.forEach(constraint => {
-                        query = query.where(constraint.field, constraint.operator, constraint.value);
+                        if (constraint.type === 'where') {
+                            query = query.where(constraint.field, constraint.operator, constraint.value);
+                        } else if (constraint.type === 'orderBy') {
+                            query = query.orderBy(constraint.field, constraint.direction);
+                        } else if (constraint.type === 'limit') {
+                            query = query.limit(constraint.value);
+                        }
                     });
                     
                     return query.get().then(snapshot => {
@@ -143,11 +149,13 @@ function initializeFirebase() {
                 
                 // Query constraints
                 where: (field, operator, value) => ({
+                    type: 'where',
                     field,
                     operator,
                     value
                 }),
-                orderBy: (field, direction) => ({
+                orderBy: (field, direction = 'asc') => ({
+                    type: 'orderBy',
                     field,
                     direction
                 }),
@@ -215,121 +223,155 @@ function signOut() {
 /**
  * Save player score to leaderboard
  * @param {number} score - Player's score
- * @returns {number} Player's high score
+ * @returns {Promise<number>} Player's high score
  */
 function saveScore(score) {
-    if (!isAuthenticated()) {
-        console.warn('Cannot save score: User not authenticated');
-        return score;
-    }
-    
-    if (!window.firebase) {
-        console.error("Firebase not initialized");
-        return score;
-    }
-    
-    const userId = currentUser.uid;
-    
-    try {
-        // First get the user document to check their high score
-        return window.firebase.firestore().collection('users').doc(userId).get()
-            .then(docSnapshot => {
-                let highScore = 0;
-                let userData = {};
-                
-                if (docSnapshot.exists) {
-                    // Get existing data
-                    userData = docSnapshot.data();
-                    highScore = userData.highScore || 0;
+    return new Promise((resolve, reject) => {
+        if (!window.firebase || !window.firebase.firestore) {
+            console.error("Firebase Firestore not available");
+            resolve(score);
+            return;
+        }
+        
+        if (!isAuthenticated()) {
+            console.warn('Cannot save score to leaderboard: User not authenticated');
+            // For guests, just use local storage
+            try {
+                const savedHighScore = localStorage.getItem('highScore') || 0;
+                const highScore = Math.max(score, parseInt(savedHighScore));
+                localStorage.setItem('highScore', highScore);
+                resolve(highScore);
+            } catch (error) {
+                console.error('Error saving score to local storage:', error);
+                resolve(score);
+            }
+            return;
+        }
+        
+        const userId = currentUser.uid;
+        
+        try {
+            // First get the user document to check their high score
+            window.firebase.firestore().collection('users').doc(userId).get()
+                .then(docSnapshot => {
+                    let highScore = 0;
+                    let userData = {};
                     
-                    // Only update if new score is higher
-                    if (score > highScore) {
-                        highScore = score;
+                    if (docSnapshot.exists) {
+                        // Get existing data
+                        userData = docSnapshot.data();
+                        highScore = userData.highScore || 0;
                         
-                        // Update user document with new high score
-                        window.firebase.firestore().collection('users').doc(userId).update({
-                            highScore: highScore,
-                            lastPlayed: firebase.firestore.FieldValue.serverTimestamp()
-                        });
-                        
-                        // Add score to global leaderboard
-                        addScoreToLeaderboard(score);
+                        // Only update if new score is higher
+                        if (score > highScore) {
+                            highScore = score;
+                            
+                            // Update user document with new high score
+                            return window.firebase.firestore().collection('users').doc(userId).update({
+                                highScore: highScore,
+                                lastPlayed: firebase.firestore.FieldValue.serverTimestamp()
+                            }).then(() => {
+                                // Add score to global leaderboard
+                                return addScoreToLeaderboard(score).then(() => highScore);
+                            });
+                        } else {
+                            // Just update lastPlayed
+                            return window.firebase.firestore().collection('users').doc(userId).update({
+                                lastPlayed: firebase.firestore.FieldValue.serverTimestamp()
+                            }).then(() => highScore);
+                        }
                     } else {
-                        // Just update lastPlayed
-                        window.firebase.firestore().collection('users').doc(userId).update({
+                        // User document doesn't exist, create it
+                        highScore = score;
+                        return window.firebase.firestore().collection('users').doc(userId).set({
+                            displayName: currentUser.displayName,
+                            email: currentUser.email,
+                            photoURL: currentUser.photoURL,
+                            highScore: score,
                             lastPlayed: firebase.firestore.FieldValue.serverTimestamp()
+                        }).then(() => {
+                            // Add score to global leaderboard
+                            return addScoreToLeaderboard(score).then(() => highScore);
                         });
                     }
-                } else {
-                    // User document doesn't exist, create it
-                    highScore = score;
-                    window.firebase.firestore().collection('users').doc(userId).set({
-                        displayName: currentUser.displayName,
-                        email: currentUser.email,
-                        photoURL: currentUser.photoURL,
-                        highScore: score,
-                        lastPlayed: firebase.firestore.FieldValue.serverTimestamp()
-                    });
-                    
-                    // Add score to global leaderboard
-                    addScoreToLeaderboard(score);
-                }
-                
-                return highScore;
-            })
-            .catch(error => {
-                console.error('Error saving score:', error);
-                return score;
-            });
-    } catch (error) {
-        console.error('Exception saving score:', error);
-        return score;
-    }
+                })
+                .then(highScore => {
+                    console.log(`Score saved. High score: ${highScore}`);
+                    resolve(highScore);
+                })
+                .catch(error => {
+                    console.error('Error saving score:', error);
+                    // Still return the score even if there was an error
+                    resolve(score);
+                });
+        } catch (error) {
+            console.error('Exception saving score:', error);
+            resolve(score);
+        }
+    });
 }
 
 /**
  * Add score to global leaderboard
  * @param {number} score - Player's score
+ * @returns {Promise} Promise that resolves when score is added
  */
 function addScoreToLeaderboard(score) {
-    if (!isAuthenticated() || !window.firebase) return;
-    
-    try {
-        const now = new Date();
-        const userId = currentUser.uid;
-        const playerName = currentUser.displayName || 'Player';
+    return new Promise((resolve, reject) => {
+        if (!isAuthenticated() || !window.firebase) {
+            resolve(); // Silently resolve for guests
+            return;
+        }
         
-        // Add to global leaderboard
-        window.firebase.firestore().collection('leaderboard').add({
-            userId: userId,
-            name: playerName,
-            score: score,
-            timestamp: firebase.firestore.FieldValue.serverTimestamp()
-        });
-        
-        // Add to daily leaderboard
-        const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
-        window.firebase.firestore().collection(`leaderboard_daily/${dateStr}/scores`).add({
-            userId: userId,
-            name: playerName,
-            score: score,
-            timestamp: firebase.firestore.FieldValue.serverTimestamp()
-        });
-        
-        // Add to weekly leaderboard
-        // Get ISO week number
-        const weekNum = getWeekNumber(now);
-        const weekStr = `${now.getFullYear()}-W${weekNum}`;
-        
-        window.firebase.firestore().collection(`leaderboard_weekly/${weekStr}/scores`).add({
-            userId: userId,
-            name: playerName,
-            score: score,
-            timestamp: firebase.firestore.FieldValue.serverTimestamp()
-        });
-    } catch (error) {
-        console.error('Error adding score to leaderboard:', error);
-    }
+        try {
+            const now = new Date();
+            const userId = currentUser.uid;
+            const playerName = currentUser.displayName || 'Player';
+            const timestamp = firebase.firestore.FieldValue.serverTimestamp();
+            
+            // Score data
+            const scoreData = {
+                userId: userId,
+                name: playerName,
+                score: score,
+                timestamp: timestamp
+            };
+            
+            // Batch write for efficiency
+            const batch = window.firebase.firestore().batch();
+            
+            // Add to global leaderboard
+            const globalRef = window.firebase.firestore().collection('leaderboard').doc();
+            batch.set(globalRef, scoreData);
+            
+            // Add to daily leaderboard
+            const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
+            const dailyRef = window.firebase.firestore().collection(`leaderboard_daily/${dateStr}/scores`).doc();
+            batch.set(dailyRef, scoreData);
+            
+            // Add to weekly leaderboard
+            // Get ISO week number
+            const weekNum = getWeekNumber(now);
+            const weekStr = `${now.getFullYear()}-W${weekNum}`;
+            
+            const weeklyRef = window.firebase.firestore().collection(`leaderboard_weekly/${weekStr}/scores`).doc();
+            batch.set(weeklyRef, scoreData);
+            
+            // Commit batch
+            return batch.commit()
+                .then(() => {
+                    console.log('Score added to all leaderboards');
+                    resolve();
+                })
+                .catch(error => {
+                    console.error('Error adding score to leaderboards:', error);
+                    resolve(); // Still resolve to not break the flow
+                });
+        } catch (error) {
+            console.error('Exception adding score to leaderboard:', error);
+            resolve(); // Still resolve to not break the flow
+        }
+    });
 }
 
 /**
@@ -359,8 +401,10 @@ function updatePlayerStatus(status) {
         window.firebase.database().ref(`players/${userId}/status`).set({
             status: status,
             lastUpdated: Date.now()
+        }).catch(error => {
+            console.error('Error updating player status:', error);
         });
     } catch (error) {
-        console.error('Error updating player status:', error);
+        console.error('Exception updating player status:', error);
     }
 }

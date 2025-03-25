@@ -13,10 +13,11 @@
 function getTopScores(limit = 10, timeframe = 'all') {
     return new Promise((resolve, reject) => {
         ensureFirebaseLoaded(() => {
-            let constraints = [
-                window.firebaseFunctions.orderBy('score', 'desc'),
-                window.firebaseFunctions.limit(limit)
-            ];
+            if (!window.firebase || !window.firebase.firestore) {
+                console.error("Firebase Firestore not available");
+                resolve([]);
+                return;
+            }
             
             let collectionPath = 'leaderboard';
             
@@ -32,20 +33,39 @@ function getTopScores(limit = 10, timeframe = 'all') {
                 collectionPath = `leaderboard_weekly/${weekStr}/scores`;
             }
             
-            window.firebaseFunctions.getCollection(collectionPath, constraints)
-                .then(scores => {
-                    resolve(scores.map(score => ({
-                        id: score.id,
-                        name: score.name || 'Unknown Player',
-                        score: score.score || 0,
-                        userId: score.userId,
-                        timestamp: score.timestamp ? new Date(score.timestamp.seconds * 1000) : new Date()
-                    })));
-                })
-                .catch(error => {
-                    console.error('Error getting top scores:', error);
-                    resolve([]);
-                });
+            try {
+                // Get scores sorted by score in descending order
+                window.firebase.firestore()
+                    .collection(collectionPath)
+                    .orderBy('score', 'desc')
+                    .limit(limit)
+                    .get()
+                    .then(snapshot => {
+                        const scores = [];
+                        snapshot.forEach(doc => {
+                            scores.push({
+                                id: doc.id,
+                                ...doc.data()
+                            });
+                        });
+                        
+                        console.log(`Retrieved ${scores.length} scores from ${collectionPath}`);
+                        resolve(scores);
+                    })
+                    .catch(error => {
+                        console.error('Error getting top scores:', error);
+                        
+                        // If the collection doesn't exist yet (new timeframe), return empty array
+                        if (error.code === 'permission-denied' || error.code === 'not-found') {
+                            resolve([]);
+                        } else {
+                            reject(error);
+                        }
+                    });
+            } catch (error) {
+                console.error('Exception getting top scores:', error);
+                resolve([]);
+            }
         });
     });
 }
@@ -59,6 +79,12 @@ function getTopScores(limit = 10, timeframe = 'all') {
 function getUserRanking(score, timeframe = 'all') {
     return new Promise((resolve, reject) => {
         ensureFirebaseLoaded(() => {
+            if (!window.firebase || !window.firebase.firestore) {
+                console.error("Firebase Firestore not available");
+                resolve(0);
+                return;
+            }
+            
             let collectionPath = 'leaderboard';
             
             if (timeframe === 'daily') {
@@ -71,19 +97,72 @@ function getUserRanking(score, timeframe = 'all') {
                 collectionPath = `leaderboard_weekly/${weekStr}/scores`;
             }
             
-            const constraints = [
-                window.firebaseFunctions.where('score', '>', score)
-            ];
+            try {
+                // Get number of scores higher than the user's score
+                window.firebase.firestore()
+                    .collection(collectionPath)
+                    .where('score', '>', score)
+                    .get()
+                    .then(snapshot => {
+                        // Return rank (number of players with higher score + 1)
+                        resolve(snapshot.size + 1);
+                    })
+                    .catch(error => {
+                        console.error('Error getting user ranking:', error);
+                        resolve(0);
+                    });
+            } catch (error) {
+                console.error('Exception getting user ranking:', error);
+                resolve(0);
+            }
+        });
+    });
+}
+
+/**
+ * Get user's high score
+ * @returns {Promise<number>} User's high score
+ */
+function getUserHighScore() {
+    return new Promise((resolve, reject) => {
+        ensureFirebaseLoaded(() => {
+            if (!isAuthenticated()) {
+                // Return guest high score from local storage
+                const localHighScore = localStorage.getItem('highScore') || 0;
+                resolve(parseInt(localHighScore));
+                return;
+            }
             
-            window.firebaseFunctions.getCollection(collectionPath, constraints)
-                .then(higherScores => {
-                    // Return rank (number of players with higher score + 1)
-                    resolve(higherScores.length + 1);
-                })
-                .catch(error => {
-                    console.error('Error getting user ranking:', error);
-                    resolve(0);
-                });
+            if (!window.firebase || !window.firebase.firestore) {
+                console.error("Firebase Firestore not available");
+                resolve(0);
+                return;
+            }
+            
+            const userId = getCurrentUser().uid;
+            
+            try {
+                // Get user document from Firestore
+                window.firebase.firestore()
+                    .collection('users')
+                    .doc(userId)
+                    .get()
+                    .then(doc => {
+                        if (doc.exists) {
+                            const userData = doc.data();
+                            resolve(userData.highScore || 0);
+                        } else {
+                            resolve(0);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error getting user high score:', error);
+                        resolve(0);
+                    });
+            } catch (error) {
+                console.error('Exception getting user high score:', error);
+                resolve(0);
+            }
         });
     });
 }
@@ -97,30 +176,44 @@ function getUserRanking(score, timeframe = 'all') {
 function getUserScoreHistory(userId, limit = 10) {
     return new Promise((resolve, reject) => {
         ensureFirebaseLoaded(() => {
+            if (!window.firebase || !window.firebase.firestore) {
+                console.error("Firebase Firestore not available");
+                resolve([]);
+                return;
+            }
+            
             if (!userId) {
                 console.error('Invalid userId');
                 resolve([]);
                 return;
             }
             
-            const constraints = [
-                window.firebaseFunctions.where('userId', '==', userId),
-                window.firebaseFunctions.orderBy('timestamp', 'desc'),
-                window.firebaseFunctions.limit(limit)
-            ];
-            
-            window.firebaseFunctions.getCollection('leaderboard', constraints)
-                .then(scores => {
-                    resolve(scores.map(score => ({
-                        id: score.id,
-                        score: score.score || 0,
-                        timestamp: score.timestamp ? new Date(score.timestamp.seconds * 1000) : new Date()
-                    })));
-                })
-                .catch(error => {
-                    console.error('Error getting user score history:', error);
-                    resolve([]);
-                });
+            try {
+                // Get user's score history
+                window.firebase.firestore()
+                    .collection('leaderboard')
+                    .where('userId', '==', userId)
+                    .orderBy('timestamp', 'desc')
+                    .limit(limit)
+                    .get()
+                    .then(snapshot => {
+                        const scores = [];
+                        snapshot.forEach(doc => {
+                            scores.push({
+                                id: doc.id,
+                                ...doc.data()
+                            });
+                        });
+                        resolve(scores);
+                    })
+                    .catch(error => {
+                        console.error('Error getting user score history:', error);
+                        resolve([]);
+                    });
+            } catch (error) {
+                console.error('Exception getting user score history:', error);
+                resolve([]);
+            }
         });
     });
 }
@@ -133,6 +226,12 @@ function getUserScoreHistory(userId, limit = 10) {
 function getLeaderboardStats(timeframe = 'all') {
     return new Promise((resolve, reject) => {
         ensureFirebaseLoaded(() => {
+            if (!window.firebase || !window.firebase.firestore) {
+                console.error("Firebase Firestore not available");
+                resolve({});
+                return;
+            }
+            
             let collectionPath = 'leaderboard';
             
             if (timeframe === 'daily') {
@@ -145,29 +244,43 @@ function getLeaderboardStats(timeframe = 'all') {
                 collectionPath = `leaderboard_weekly/${weekStr}/scores`;
             }
             
-            window.firebaseFunctions.getCollection(collectionPath, [])
-                .then(scores => {
-                    const scoreValues = scores.map(s => s.score || 0);
-                    
-                    // Calculate statistics
-                    const count = scoreValues.length;
-                    const total = scoreValues.reduce((sum, score) => sum + score, 0);
-                    const average = count > 0 ? total / count : 0;
-                    const highest = count > 0 ? Math.max(...scoreValues) : 0;
-                    const lowest = count > 0 ? Math.min(...scoreValues) : 0;
-                    
-                    resolve({
-                        count,
-                        total,
-                        average,
-                        highest,
-                        lowest
+            try {
+                // Get all scores to calculate statistics
+                window.firebase.firestore()
+                    .collection(collectionPath)
+                    .get()
+                    .then(snapshot => {
+                        const scores = [];
+                        snapshot.forEach(doc => {
+                            const data = doc.data();
+                            if (data.score) {
+                                scores.push(data.score);
+                            }
+                        });
+                        
+                        // Calculate statistics
+                        const count = scores.length;
+                        const total = scores.reduce((sum, score) => sum + score, 0);
+                        const average = count > 0 ? total / count : 0;
+                        const highest = count > 0 ? Math.max(...scores) : 0;
+                        const lowest = count > 0 ? Math.min(...scores) : 0;
+                        
+                        resolve({
+                            count,
+                            total,
+                            average,
+                            highest,
+                            lowest
+                        });
+                    })
+                    .catch(error => {
+                        console.error('Error getting leaderboard stats:', error);
+                        resolve({});
                     });
-                })
-                .catch(error => {
-                    console.error('Error getting leaderboard stats:', error);
-                    resolve({});
-                });
+            } catch (error) {
+                console.error('Exception getting leaderboard stats:', error);
+                resolve({});
+            }
         });
     });
 }
@@ -193,6 +306,22 @@ function ensureFirebaseLoaded(callback) {
     if (window.firebaseLoaded) {
         callback();
     } else {
-        document.addEventListener('firebaseLoaded', callback);
+        // Wait for Firebase to load
+        const firebaseLoadedListener = () => {
+            callback();
+            document.removeEventListener('firebaseLoaded', firebaseLoadedListener);
+        };
+        document.addEventListener('firebaseLoaded', firebaseLoadedListener);
+        
+        // Set a timeout in case Firebase doesn't load
+        setTimeout(() => {
+            // Check if callback has already been executed by the event listener
+            if (window.firebaseLoaded) return;
+            
+            // If not, execute callback to prevent blocking
+            document.removeEventListener('firebaseLoaded', firebaseLoadedListener);
+            console.warn('Firebase took too long to load, proceeding anyway');
+            callback();
+        }, 5000);
     }
 }

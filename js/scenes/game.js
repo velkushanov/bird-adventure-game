@@ -18,6 +18,13 @@ class GameScene extends Phaser.Scene {
         this.isGameOver = false;
         this.characterId = null;
         this.currentBackground = null;
+        
+        // Multiplayer properties
+        this.isMultiplayer = false;
+        this.roomId = null;
+        this.otherPlayers = {};
+        this.otherPlayerSprites = {};
+        this.playerPositionListener = null;
     }
     
     /**
@@ -32,6 +39,16 @@ class GameScene extends Phaser.Scene {
         this.isGameOver = false;
         this.isBig = false;
         this.isShooting = false;
+        
+        // Set multiplayer flag if provided
+        this.isMultiplayer = data.multiplayer || false;
+        this.roomId = data.roomId || null;
+        
+        // Clear any previous multiplayer state
+        this.otherPlayers = {};
+        this.otherPlayerSprites = {};
+        
+        console.log(`Game initialized: CharacterId=${this.characterId}, Multiplayer=${this.isMultiplayer}, RoomId=${this.roomId}`);
     }
     
     create() {
@@ -50,14 +67,19 @@ class GameScene extends Phaser.Scene {
         // Create UI elements
         this.createUI();
         
-        // Setup game timers
-        this.setupTimers();
-        
         // Setup input
         this.setupInput();
         
         // Start background music
         this.sound.play('music-gameplay', { loop: true, volume: 0.7 });
+        
+        // Setup multiplayer if enabled
+        if (this.isMultiplayer && this.roomId) {
+            this.setupMultiplayer();
+        } else {
+            // Setup game timers for single player
+            this.setupTimers();
+        }
         
         // Notify other systems that game started
         if (isAuthenticated()) {
@@ -88,6 +110,9 @@ class GameScene extends Phaser.Scene {
         this.enemies = this.physics.add.group();
         this.powerUps = this.physics.add.group();
         this.fireballs = this.physics.add.group();
+        
+        // Create a group for other players (multiplayer)
+        this.multiplayer = this.add.group();
     }
     
     /**
@@ -97,31 +122,22 @@ class GameScene extends Phaser.Scene {
         // Find character config
         const character = CONFIG.CHARACTERS.find(c => c.id === this.characterId) || CONFIG.CHARACTERS[0];
         
-        // Create bird sprite
-        this.bird = this.physics.add.sprite(CONFIG.BIRD_START_X, CONFIG.BIRD_START_Y, character.texture);
-        this.bird.setCollideWorldBounds(true);
-        
-        // Set smaller collision body
-        const bodyWidth = this.bird.width * CONFIG.BIRD_COLLIDER_REDUCTION;
-        const bodyHeight = this.bird.height * CONFIG.BIRD_COLLIDER_REDUCTION;
-        this.bird.body.setSize(bodyWidth, bodyHeight);
-        this.bird.body.setOffset(
-            (this.bird.width - bodyWidth) / 2, 
-            (this.bird.height - bodyHeight) / 2
+        // Create bird
+        this.bird = new Bird(
+            this,
+            CONFIG.BIRD_START_X,
+            CONFIG.BIRD_START_Y,
+            character.texture,
+            {
+                flightPower: character.flightPower
+            }
         );
+        
+        // Apply physics settings
+        this.bird.setCollideWorldBounds(true);
         
         // Store character properties
         this.bird.flightPower = character.flightPower;
-        
-        // Add animations
-        this.anims.create({
-            key: 'fly',
-            frames: this.anims.generateFrameNumbers(character.texture, { start: 0, end: 2 }),
-            frameRate: 10,
-            repeat: -1
-        });
-        
-        this.bird.play('fly');
     }
     
     /**
@@ -151,6 +167,7 @@ class GameScene extends Phaser.Scene {
             strokeThickness: 4
         });
         this.scoreText.setScrollFactor(0);
+        this.scoreText.setDepth(1000); // Ensure UI is always on top
         
         // Level text
         this.levelText = this.add.text(20, 55, 'Level: 1', { 
@@ -161,16 +178,43 @@ class GameScene extends Phaser.Scene {
             strokeThickness: 4
         });
         this.levelText.setScrollFactor(0);
+        this.levelText.setDepth(1000);
         
         // Power-up indicators
         this.powerupIndicator = this.add.container(CONFIG.GAME_WIDTH - 150, 20);
         this.powerupIndicator.setScrollFactor(0);
+        this.powerupIndicator.setDepth(1000);
         
         // Create indicators but hide them initially
         this.bigIndicator = this.add.image(0, 0, 'mushroom-icon').setVisible(false);
         this.shootIndicator = this.add.image(50, 0, 'flower-icon').setVisible(false);
         
         this.powerupIndicator.add([this.bigIndicator, this.shootIndicator]);
+        
+        // Multiplayer indicators
+        if (this.isMultiplayer) {
+            // Room info
+            this.roomText = this.add.text(CONFIG.GAME_WIDTH - 250, 20, 'Multiplayer Mode', {
+                fontFamily: 'Arial',
+                fontSize: '18px',
+                fill: '#FFFF00',
+                stroke: '#000000',
+                strokeThickness: 3
+            });
+            this.roomText.setScrollFactor(0);
+            this.roomText.setDepth(1000);
+            
+            // Player count
+            this.playersText = this.add.text(CONFIG.GAME_WIDTH - 250, 45, 'Players: 1', {
+                fontFamily: 'Arial',
+                fontSize: '16px',
+                fill: '#FFFFFF',
+                stroke: '#000000',
+                strokeThickness: 2
+            });
+            this.playersText.setScrollFactor(0);
+            this.playersText.setDepth(1000);
+        }
     }
     
     /**
@@ -211,6 +255,153 @@ class GameScene extends Phaser.Scene {
     }
     
     /**
+     * Setup multiplayer functionality
+     */
+    setupMultiplayer() {
+        console.log("Setting up multiplayer game");
+        
+        // Start syncing player position
+        if (this.bird) {
+            startMultiplayerSync(this.bird);
+        }
+        
+        // Listen for other players' positions
+        this.playerPositionListener = listenToPlayerPositions(this.updateOtherPlayers.bind(this));
+        
+        // Set up multiplayer timers (same as single player for now)
+        this.setupTimers();
+    }
+    
+    /**
+     * Update other players' positions in multiplayer
+     * @param {Object} playerData - Data of other players
+     */
+    updateOtherPlayers(playerData) {
+        if (!playerData) return;
+        
+        // Process each player
+        for (const playerId in playerData) {
+            const player = playerData[playerId];
+            
+            // Skip if no position data or character
+            if (!player.position || !player.character) continue;
+            
+            // Find the character texture 
+            const character = CONFIG.CHARACTERS.find(c => c.id === player.character);
+            if (!character) continue;
+            
+            // Create or update player sprite
+            if (!this.otherPlayerSprites[playerId]) {
+                console.log(`Creating sprite for player ${playerId} with character ${player.character}`);
+                
+                // Create new sprite for this player
+                const sprite = this.add.sprite(
+                    player.position.x,
+                    player.position.y,
+                    character.texture
+                );
+                
+                // Create name tag above player
+                const nameTag = this.add.text(
+                    player.position.x,
+                    player.position.y - 30,
+                    player.name || 'Player',
+                    {
+                        fontFamily: 'Arial',
+                        fontSize: '14px',
+                        fill: '#FFFFFF',
+                        stroke: '#000000',
+                        strokeThickness: 3
+                    }
+                ).setOrigin(0.5);
+                
+                // Store both sprite and name tag
+                this.otherPlayerSprites[playerId] = {
+                    sprite: sprite,
+                    nameTag: nameTag,
+                    lastUpdate: Date.now()
+                };
+                
+                // Create and play animation
+                const animKey = `mp-fly-${character.texture}-${playerId}`;
+                if (!this.anims.exists(animKey)) {
+                    this.anims.create({
+                        key: animKey,
+                        frames: this.anims.generateFrameNumbers(character.texture, { start: 0, end: 2 }),
+                        frameRate: 10,
+                        repeat: -1
+                    });
+                }
+                
+                sprite.play(animKey);
+                
+                // Update player count display
+                this.updatePlayerCountDisplay();
+            } else {
+                // Update existing sprite
+                const spriteData = this.otherPlayerSprites[playerId];
+                const sprite = spriteData.sprite;
+                const nameTag = spriteData.nameTag;
+                
+                // Only update if position data is newer
+                if (player.position.timestamp > spriteData.lastUpdate) {
+                    // Smooth movement with tweens instead of direct position changes
+                    this.tweens.add({
+                        targets: sprite,
+                        x: player.position.x,
+                        y: player.position.y,
+                        rotation: player.position.rotation || 0,
+                        duration: 50, // Short duration for smoother updates
+                        ease: 'Linear'
+                    });
+                    
+                    // Update name tag position
+                    nameTag.x = player.position.x;
+                    nameTag.y = player.position.y - 30;
+                    
+                    // Apply scale and tint if available
+                    if (player.position.scale) {
+                        sprite.setScale(player.position.scale);
+                    }
+                    
+                    if (player.position.tint) {
+                        sprite.setTint(player.position.tint);
+                    } else {
+                        sprite.clearTint();
+                    }
+                    
+                    // Update last update timestamp
+                    spriteData.lastUpdate = player.position.timestamp;
+                }
+            }
+        }
+        
+        // Remove sprites for players no longer in the room
+        for (const playerId in this.otherPlayerSprites) {
+            if (!playerData[playerId]) {
+                // Player left, remove their sprite
+                const spriteData = this.otherPlayerSprites[playerId];
+                if (spriteData.sprite) spriteData.sprite.destroy();
+                if (spriteData.nameTag) spriteData.nameTag.destroy();
+                delete this.otherPlayerSprites[playerId];
+                
+                // Update player count display
+                this.updatePlayerCountDisplay();
+            }
+        }
+    }
+    
+    /**
+     * Update the player count display in multiplayer
+     */
+    updatePlayerCountDisplay() {
+        if (this.isMultiplayer && this.playersText) {
+            const playerCount = Object.keys(this.otherPlayerSprites).length + 1; // +1 for local player
+            this.playersText.setText(`Players: ${playerCount}`);
+        }
+    }
+    
+    /**
      * Setup player input controls
      */
     setupInput() {
@@ -220,6 +411,11 @@ class GameScene extends Phaser.Scene {
         // Spacebar for flapping
         this.input.keyboard.on('keydown-SPACE', () => {
             this.flapBird();
+        });
+        
+        // Keyboard for shooting (when power-up active)
+        this.input.keyboard.on('keydown-F', () => {
+            this.shootFireball();
         });
         
         // Touch/mouse input for mobile
@@ -239,28 +435,31 @@ class GameScene extends Phaser.Scene {
         // Update scrolling background
         this.updateBackground(delta);
         
+        // Update bird
+        if (this.bird) {
+            this.bird.update(time, delta);
+        }
+        
         // Update game objects
         this.updateObstacles(delta);
         this.updateEnemies(delta);
         this.updatePowerUps(delta);
         this.updateFireballs(delta);
         
-        // Apply gravity to bird (always falling)
-        // The actual flap is handled by input events
+        // Auto-shoot if flower power is active
+        if (this.isShooting && time > this.lastFireTime + CONFIG.FIREBALL_RATE) {
+            this.shootFireball();
+            this.lastFireTime = time;
+        }
     }
     
     /**
      * Make the bird flap its wings
      */
     flapBird() {
-        if (this.isGameOver) return;
+        if (this.isGameOver || !this.bird) return;
         
-        // Apply upward velocity
-        const flapPower = CONFIG.BIRD_FLAP_VELOCITY * this.bird.flightPower;
-        this.bird.setVelocityY(flapPower);
-        
-        // Play flap sound
-        this.sound.play('sfx-flap', { volume: 0.5 });
+        this.bird.flap();
     }
     
     /**
@@ -355,12 +554,6 @@ class GameScene extends Phaser.Scene {
      * @param {number} delta - Delta time since last frame
      */
     updateFireballs(delta) {
-        // Auto-shoot if flower power is active
-        if (this.isShooting && this.time.now > this.lastFireTime + CONFIG.FIREBALL_RATE) {
-            this.shootFireball();
-            this.lastFireTime = this.time.now;
-        }
-        
         // Move fireballs forward
         const fireballSpeed = CONFIG.FIREBALL_SPEED * delta / 1000;
         this.fireballs.getChildren().forEach(fireball => {
@@ -443,7 +636,7 @@ class GameScene extends Phaser.Scene {
         const y = Phaser.Math.Between(100, CONFIG.GAME_HEIGHT - 100);
         
         // Randomly choose power-up type
-        const powerUpType = Phaser.Math.RND.pick(['mushroom', 'flower']);
+        const powerUpType = Phaser.Math.RND.pick(['mushroom', 'flower', 'coin']);
         const powerUp = this.powerUps.create(CONFIG.GAME_WIDTH, y, powerUpType);
         
         // Setup power-up properties
@@ -459,12 +652,19 @@ class GameScene extends Phaser.Scene {
                 yoyo: true,
                 repeat: -1
             });
-        } else {
+        } else if (powerUpType === 'flower') {
             this.tweens.add({
                 targets: powerUp,
                 angle: { from: -5, to: 5 },
                 duration: 500,
                 yoyo: true,
+                repeat: -1
+            });
+        } else if (powerUpType === 'coin') {
+            this.tweens.add({
+                targets: powerUp,
+                angle: { from: 0, to: 360 },
+                duration: 1000,
                 repeat: -1
             });
         }
@@ -484,10 +684,59 @@ class GameScene extends Phaser.Scene {
             this.activateMushroom();
         } else if (powerUp.type === 'flower') {
             this.activateFlower();
+        } else if (powerUp.type === 'coin') {
+            // Add points for coin
+            this.increaseScore(10);
+            this.sound.play('sfx-coin', { volume: 0.7 });
         }
+        
+        // Create collection effect
+        this.addCollectionEffect(powerUp.x, powerUp.y, powerUp.type);
         
         // Destroy the power-up
         powerUp.destroy();
+    }
+    
+    /**
+     * Add collection effect for power-ups
+     * @param {number} x - X position
+     * @param {number} y - Y position
+     * @param {string} type - Power-up type
+     */
+    addCollectionEffect(x, y, type) {
+        // Create particles
+        const particles = this.add.particles('particle');
+        
+        // Set particle color based on power-up type
+        let particleColor;
+        switch (type) {
+            case 'mushroom': particleColor = 0xff0000; break;
+            case 'flower': particleColor = 0xff9900; break;
+            case 'coin': particleColor = 0xffdd00; break;
+            default: particleColor = 0xffffff; break;
+        }
+        
+        // Create particle emitter
+        const emitter = particles.createEmitter({
+            x: x,
+            y: y,
+            speed: { min: 30, max: 80 },
+            angle: { min: 0, max: 360 },
+            scale: { start: 0.4, end: 0 },
+            lifespan: 600,
+            quantity: 15,
+            tint: particleColor
+        });
+        
+        // Stop emitting after burst
+        this.time.delayedCall(100, () => {
+            emitter.stop();
+            
+            // Clean up particles after they fade
+            this.time.delayedCall(600, () => {
+                particles.destroy();
+            });
+        });
     }
     
     /**
@@ -539,6 +788,8 @@ class GameScene extends Phaser.Scene {
      * Shoot a fireball
      */
     shootFireball() {
+        if (!this.isShooting || this.isGameOver || !this.bird) return;
+        
         // Create fireball at bird's position
         const fireball = this.fireballs.create(
             this.bird.x + this.bird.width / 2,
@@ -548,6 +799,25 @@ class GameScene extends Phaser.Scene {
         
         // Setup fireball properties
         fireball.body.allowGravity = false;
+        fireball.setVelocityX(CONFIG.FIREBALL_SPEED);
+        
+        // Set proper collision box
+        fireball.body.setSize(fireball.width * 0.8, fireball.height * 0.8);
+        
+        // Add rotation effect
+        this.tweens.add({
+            targets: fireball,
+            angle: 360,
+            duration: 1000,
+            repeat: -1
+        });
+        
+        // Add lifespan to prevent memory leaks
+        this.time.delayedCall(5000, () => {
+            if (fireball && fireball.active) {
+                fireball.destroy();
+            }
+        });
         
         // Play sound
         this.sound.play('sfx-fireball', { volume: 0.5 });
@@ -559,8 +829,8 @@ class GameScene extends Phaser.Scene {
      * @param {Phaser.GameObjects.Sprite} obstacle - The obstacle hit
      */
     hitObstacle(bird, obstacle) {
-        if (this.isBig) {
-            // If bird is big, destroy obstacle
+        if (bird.isInvulnerable || this.isBig) {
+            // If bird is invulnerable or big, destroy obstacle
             obstacle.destroy();
             this.increaseScore(CONFIG.BIG_OBSTACLE_POINTS);
             this.sound.play('sfx-break', { volume: 0.7 });
@@ -579,8 +849,8 @@ class GameScene extends Phaser.Scene {
      * @param {Phaser.GameObjects.Sprite} enemy - The enemy hit
      */
     hitEnemy(bird, enemy) {
-        if (this.isBig) {
-            // If bird is big, destroy enemy
+        if (bird.isInvulnerable || this.isBig) {
+            // If bird is invulnerable or big, destroy enemy
             enemy.destroy();
             this.increaseScore(CONFIG.BASE_ENEMY_POINTS);
             this.sound.play('sfx-stomp', { volume: 0.7 });
@@ -640,7 +910,18 @@ class GameScene extends Phaser.Scene {
         
         // Update score
         this.score += pointsToAdd;
-        this.scoreText.setText(`Score: ${this.score}`);
+        
+        // Update score text with animation for visibility
+        this.tweens.add({
+            targets: this.scoreText,
+            scaleX: 1.2,
+            scaleY: 1.2,
+            duration: 100,
+            yoyo: true,
+            onComplete: () => {
+                this.scoreText.setText(`Score: ${this.score}`);
+            }
+        });
         
         // Create floating score text
         this.createFloatingText(`+${pointsToAdd}`, this.bird.x, this.bird.y - 30);
@@ -654,7 +935,18 @@ class GameScene extends Phaser.Scene {
         
         // Increment level
         this.level++;
-        this.levelText.setText(`Level: ${this.level}`);
+        
+        // Update level text with animation
+        this.tweens.add({
+            targets: this.levelText,
+            scaleX: 1.2,
+            scaleY: 1.2,
+            duration: 100,
+            yoyo: true,
+            onComplete: () => {
+                this.levelText.setText(`Level: ${this.level}`);
+            }
+        });
         
         // Increase game speed (up to a maximum)
         if (this.level <= CONFIG.MAX_LEVEL) {
@@ -802,38 +1094,110 @@ class GameScene extends Phaser.Scene {
         this.physics.pause();
         
         // Stop timers
-        this.levelTimer.remove();
-        this.obstacleTimer.remove();
-        this.enemyTimer.remove();
-        this.powerUpTimer.remove();
+        if (this.levelTimer) this.levelTimer.remove();
+        if (this.obstacleTimer) this.obstacleTimer.remove();
+        if (this.enemyTimer) this.enemyTimer.remove();
+        if (this.powerUpTimer) this.powerUpTimer.remove();
         
         if (this.mushroomTimer) this.mushroomTimer.remove();
         if (this.flowerTimer) this.flowerTimer.remove();
         
         // Red tint on bird to indicate death
-        this.bird.setTint(0xff0000);
-        this.bird.play('bird-hurt');
+        if (this.bird) {
+            this.bird.setTint(0xff0000);
+            this.bird.play('bird-hurt');
+        }
         
         // Play game over sound
         this.sound.stopAll();
         this.sound.play('sfx-gameover', { volume: 0.8 });
         
+        // Clean up multiplayer if active
+        if (this.isMultiplayer) {
+            stopMultiplayerSync();
+            
+            if (this.playerPositionListener) {
+                this.playerPositionListener();
+                this.playerPositionListener = null;
+            }
+            
+            // Send final score to multiplayer room
+            if (this.roomId) {
+                const finalScores = {};
+                finalScores[getCurrentUser().uid] = this.score;
+                endMultiplayerGame(finalScores).catch(err => console.error("Error ending multiplayer game:", err));
+            }
+        }
+        
         // Save score to leaderboard if authenticated
         let highScore = 0;
         
         if (isAuthenticated()) {
-            highScore = saveScore(this.score);
+            // Save score asynchronously
+            saveScore(this.score)
+                .then(savedHighScore => {
+                    highScore = savedHighScore;
+                    // Show game over screen after delay
+                    this.time.delayedCall(1500, () => {
+                        showGameOverModal(this.score, highScore);
+                    });
+                })
+                .catch(error => {
+                    console.error("Error saving score:", error);
+                    // Still show game over screen
+                    this.time.delayedCall(1500, () => {
+                        showGameOverModal(this.score, this.score);
+                    });
+                });
+                
             updatePlayerStatus('menu');
         } else {
             // For guests, just use local storage
             const savedHighScore = localStorage.getItem('highScore') || 0;
             highScore = Math.max(this.score, savedHighScore);
             localStorage.setItem('highScore', highScore);
+            
+            // Show game over screen after delay
+            this.time.delayedCall(1500, () => {
+                showGameOverModal(this.score, highScore);
+            });
+        }
+    }
+    
+    /**
+     * Cleanup resources when shutting down scene
+     */
+    shutdown() {
+        // Clean up multiplayer resources
+        if (this.isMultiplayer) {
+            stopMultiplayerSync();
+            
+            if (this.playerPositionListener) {
+                this.playerPositionListener();
+                this.playerPositionListener = null;
+            }
         }
         
-        // Show game over screen after delay
-        this.time.delayedCall(1500, () => {
-            showGameOverModal(this.score, highScore);
-        });
+        // Stop all timers
+        if (this.levelTimer) this.levelTimer.remove();
+        if (this.obstacleTimer) this.obstacleTimer.remove();
+        if (this.enemyTimer) this.enemyTimer.remove();
+        if (this.powerUpTimer) this.powerUpTimer.remove();
+        
+        // Clean up power-up timers
+        if (this.mushroomTimer) this.mushroomTimer.remove();
+        if (this.flowerTimer) this.flowerTimer.remove();
+        
+        // Kill all tweens
+        this.tweens.killAll();
+        
+        // Remove all event listeners
+        this.input.keyboard.shutdown();
+        
+        // Stop all sounds
+        this.sound.stopAll();
+        
+        // Call parent shutdown
+        super.shutdown();
     }
 }

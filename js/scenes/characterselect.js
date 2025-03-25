@@ -234,8 +234,8 @@ class CharacterSelectScene extends Phaser.Scene {
             }
         });
         
-        // Enable start button
-        this.startButton.setTint(0xffffff);
+        // Enable start button - FIXED: Make sure it's visible and properly tinted
+        this.startButton.clearTint();
         this.startText.setColor('#ffffff');
         
         // Emit character selected event if using global events
