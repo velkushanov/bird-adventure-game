@@ -115,7 +115,10 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
             if (this.canShoot && time > this.lastShotTime + this.shootCooldown) {
                 // Random chance to shoot based on level
                 const level = this.scene.level || 1;
-                const shootChance = 0.005 * level; // 0.5% per level
+                // FIXED: Reduced shooting chance significantly at low levels
+                // Old formula: const shootChance = 0.005 * level; // 0.5% per level
+                // New formula gives much lower chance at early levels
+                const shootChance = 0.001 * Math.pow(level, 1.5); // 0.1% at level 1, growing exponentially
                 
                 if (Math.random() < shootChance) {
                     this.shootAtPlayer();
@@ -140,10 +143,17 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
         if (!this.active) return;
         
         try {
+            // FIXED: Keep enemies within screen boundaries
+            const minY = 50; // Minimum Y position
+            const maxY = CONFIG.GAME_HEIGHT - 100; // Maximum Y position
+            
             switch (this.movementPattern) {
                 case 'sine':
                     // Sine wave movement
                     this.y = this.startY + Math.sin(this.moveTime / 500) * 50;
+                    
+                    // Ensure enemy stays within screen boundaries
+                    this.y = Phaser.Math.Clamp(this.y, minY, maxY);
                     break;
                     
                 case 'chase':
@@ -162,13 +172,14 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
                         }
                         
                         // Keep within screen bounds
-                        this.y = Phaser.Math.Clamp(this.y, 30, CONFIG.GAME_HEIGHT - 30);
+                        this.y = Phaser.Math.Clamp(this.y, minY, maxY);
                     }
                     break;
                     
                 case 'bounce':
-                    // Bounce between top and bottom
-                    const bounceHeight = CONFIG.GAME_HEIGHT - 100;
+                    // FIXED: Bounce between controlled boundaries
+                    // Bounce between top and bottom with controlled boundaries
+                    const bounceHeight = maxY;
                     const bounceSpeed = 2;
                     
                     // Initialize ySpeed if not set
@@ -179,8 +190,8 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
                     this.y += this.ySpeed;
                     
                     // Bounce off top and bottom
-                    if (this.y < 50) {
-                        this.y = 50;
+                    if (this.y < minY) {
+                        this.y = minY;
                         this.ySpeed = Math.abs(this.ySpeed);
                     } else if (this.y > bounceHeight) {
                         this.y = bounceHeight;
@@ -190,11 +201,19 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
                     
                 case 'hover':
                     // Hover in place, only moving horizontally
+                    // Add a small vertical oscillation to make it look more natural
+                    this.y = this.startY + Math.sin(this.moveTime / 1000) * 10;
+                    
+                    // Ensure enemy stays within screen boundaries
+                    this.y = Phaser.Math.Clamp(this.y, minY, maxY);
                     break;
                     
                 default:
-                    // Default to sine movement if pattern not recognized
+                    // Default to controlled sine movement if pattern not recognized
                     this.y = this.startY + Math.sin(this.moveTime / 500) * 30;
+                    
+                    // Ensure enemy stays within screen boundaries
+                    this.y = Phaser.Math.Clamp(this.y, minY, maxY);
                     break;
             }
         } catch (error) {
@@ -238,6 +257,9 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
             // Configure projectile physics
             projectile.body.allowGravity = false;
             
+            // FIXED: Add isEnemyProjectile flag for better collision detection
+            projectile.isEnemyProjectile = true;
+            
             // Add visual distinction - tint it red
             projectile.setTint(0xff0000);
             
@@ -247,8 +269,10 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
                 target.x, target.y
             );
             
-            // Set velocity based on angle
-            const speed = 300;
+            // FIXED: Reduced projectile speed for better gameplay
+            // Old speed: const speed = 300;
+            const speed = 180; // Much slower projectile speed
+            
             projectile.setVelocity(
                 Math.cos(angle) * speed,
                 Math.sin(angle) * speed
@@ -260,7 +284,8 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
             // Play sound
             this.scene.sound.play('sfx-fireball', { volume: 0.4 });
             
-            // Add a cleanup timer
+            // FIXED: Add a cleaner cleanup timer and trajectory
+            // Add a cleanup timer using the scene's time system
             this.scene.time.addEvent({
                 delay: 4000,
                 callback: () => {
@@ -271,7 +296,6 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
                 callbackScope: this
             });
             
-            console.log("Enemy shot a projectile at player");
             return projectile;
         } catch (error) {
             console.error("Error in Enemy.shootAtPlayer:", error);
@@ -548,8 +572,10 @@ class EnemyManager {
             // Create enemy with scaled health based on level
             const healthBonus = Math.floor((level - 1) / 3);
             
-            // Determine if enemy can shoot (level-based chance)
-            const canShoot = typeInfo.canShoot && level >= 3; // Only enable shooting from level 3+
+            // FIXED: Lower chance for enemies to shoot in early levels
+            // and increase cooldown for early levels
+            const canShoot = typeInfo.canShoot && level >= 3 && Math.random() < 0.3; // Only 30% of eligible enemies can shoot
+            const shootCooldown = 3000 + (10 - Math.min(level, 10)) * 500; // Longer cooldown at low levels
             
             const enemy = new Enemy(
                 this.scene,
@@ -562,7 +588,7 @@ class EnemyManager {
                     health: 1 + healthBonus,
                     speed: 1 + (level * 0.1),
                     canShoot: canShoot,
-                    shootCooldown: 3000 - (level * 200) // Reduce cooldown with higher levels
+                    shootCooldown: shootCooldown
                 }
             );
             
@@ -586,8 +612,9 @@ class EnemyManager {
             // Choose random enemy type
             const typeInfo = Phaser.Math.RND.pick(availableTypes);
             
-            // Random vertical position
-            const y = Phaser.Math.Between(100, CONFIG.GAME_HEIGHT - 100);
+            // FIXED: Better vertical position to avoid enemies dropping out of view
+            // Random vertical position, kept within safe boundaries
+            const y = Phaser.Math.Between(100, CONFIG.GAME_HEIGHT - 150);
             
             // Create enemy
             this.createEnemy(CONFIG.GAME_WIDTH, y, typeInfo, level);
@@ -606,9 +633,10 @@ class EnemyManager {
             // Choose random enemy type
             const typeInfo = Phaser.Math.RND.pick(availableTypes);
             
-            // Vertical positions
+            // FIXED: Better vertical positions to keep enemies in view
+            // Vertical positions, kept more centered
             const y1 = Phaser.Math.Between(100, CONFIG.GAME_HEIGHT / 2 - 50);
-            const y2 = Phaser.Math.Between(CONFIG.GAME_HEIGHT / 2 + 50, CONFIG.GAME_HEIGHT - 100);
+            const y2 = Phaser.Math.Between(CONFIG.GAME_HEIGHT / 2 + 50, CONFIG.GAME_HEIGHT - 150);
             
             // Create enemies
             this.createEnemy(CONFIG.GAME_WIDTH, y1, typeInfo, level);
@@ -628,8 +656,9 @@ class EnemyManager {
             // Choose random enemy type
             const typeInfo = Phaser.Math.RND.pick(availableTypes);
             
-            // Center position
-            const centerY = Phaser.Math.Between(150, CONFIG.GAME_HEIGHT - 150);
+            // FIXED: Safer center position
+            // Center position, kept with more buffer from edges
+            const centerY = Phaser.Math.Between(150, CONFIG.GAME_HEIGHT - 200);
             
             // Create enemies in triangle formation
             this.createEnemy(CONFIG.GAME_WIDTH, centerY, typeInfo, level);
@@ -654,8 +683,9 @@ class EnemyManager {
             const isHorizontal = Phaser.Math.RND.frac() < 0.5;
             
             if (isHorizontal) {
-                // Horizontal line
-                const y = Phaser.Math.Between(150, CONFIG.GAME_HEIGHT - 150);
+                // FIXED: Better Y position for horizontal line
+                // Horizontal line, kept away from edges
+                const y = Phaser.Math.Between(150, CONFIG.GAME_HEIGHT - 180);
                 const count = Phaser.Math.Between(3, 5);
                 const spacing = 80;
                 
@@ -663,12 +693,13 @@ class EnemyManager {
                     this.createEnemy(CONFIG.GAME_WIDTH + (i * spacing), y, typeInfo, level);
                 }
             } else {
-                // Vertical line
+                // Vertical line with better spacing
                 const count = Phaser.Math.Between(3, 4);
-                const spacing = CONFIG.GAME_HEIGHT / (count + 1);
+                const spacing = (CONFIG.GAME_HEIGHT - 300) / (count + 1);
+                const topMargin = 150; // Keep away from top
                 
                 for (let i = 1; i <= count; i++) {
-                    this.createEnemy(CONFIG.GAME_WIDTH, i * spacing, typeInfo, level);
+                    this.createEnemy(CONFIG.GAME_WIDTH, topMargin + i * spacing, typeInfo, level);
                 }
             }
         } catch (error) {
@@ -686,15 +717,17 @@ class EnemyManager {
             // Choose random enemy type
             const typeInfo = Phaser.Math.RND.pick(availableTypes);
             
-            // Wave parameters
+            // FIXED: Better wave parameters to keep enemies in view
+            // Wave parameters with safe boundaries
             const count = Phaser.Math.Between(4, 6);
             const waveWidth = 250;
-            const centerY = Phaser.Math.Between(150, CONFIG.GAME_HEIGHT - 150);
+            const centerY = Phaser.Math.Between(180, CONFIG.GAME_HEIGHT - 200);
+            const amplitude = Math.min(60, (CONFIG.GAME_HEIGHT - 400) / 2); // Limit wave amplitude
             
             // Create enemies along a sine wave
             for (let i = 0; i < count; i++) {
                 const xOffset = (i / (count - 1)) * waveWidth;
-                const yOffset = Math.sin((i / (count - 1)) * Math.PI * 2) * 80;
+                const yOffset = Math.sin((i / (count - 1)) * Math.PI * 2) * amplitude;
                 
                 this.createEnemy(
                     CONFIG.GAME_WIDTH + xOffset,

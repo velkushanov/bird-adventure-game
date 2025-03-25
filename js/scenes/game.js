@@ -261,28 +261,39 @@ class GameScene extends Phaser.Scene {
         }
     }
     
-    /**
-     * Setup collision detection between game objects
-     */
-    setupCollisions() {
-        try {
-            // Bird collisions
-            this.physics.add.collider(this.bird, this.obstacles, this.hitObstacle, null, this);
-            this.physics.add.collider(this.bird, this.enemies, this.hitEnemy, null, this);
-            this.physics.add.overlap(this.bird, this.powerUps, this.collectPowerUp, null, this);
-            
-            // Fireball collisions - use overlap instead of collider for more reliable detection
-            this.physics.add.overlap(this.fireballs, this.enemies, this.hitEnemyWithFireball, null, this);
-            this.physics.add.overlap(this.fireballs, this.obstacles, this.hitObstacleWithFireball, null, this);
-            
-            // Enemy projectile collisions
-            this.physics.add.overlap(this.enemyProjectiles, this.bird, this.hitBirdWithProjectile, null, this);
-            
-            console.log("Collisions set up successfully");
-        } catch (error) {
-            console.error('Error in setupCollisions:', error);
-        }
+/**
+ * Setup collision detection between game objects
+ * FIXED: Improved collision detection method
+ */
+setupCollisions() {
+    try {
+        // Bird collisions
+        this.physics.add.collider(this.bird, this.obstacles, this.hitObstacle, null, this);
+        this.physics.add.collider(this.bird, this.enemies, this.hitEnemy, null, this);
+        this.physics.add.overlap(this.bird, this.powerUps, this.collectPowerUp, null, this);
+        
+        // Fireball collisions - use overlap instead of collider for more reliable detection
+        this.physics.add.overlap(this.fireballs, this.enemies, this.hitEnemyWithFireball, null, this);
+        this.physics.add.overlap(this.fireballs, this.obstacles, this.hitObstacleWithFireball, null, this);
+        
+        // FIXED: Enemy projectile collisions - use modified collision method
+        // Replace with a more reliable collision detection using overlap
+        this.physics.add.overlap(
+            this.enemyProjectiles, 
+            this.bird, 
+            this.hitBirdWithProjectile, 
+            (projectile, bird) => {
+                // Extra validation to ensure projectile is valid
+                return projectile.active && projectile.isEnemyProjectile && !bird.isDead;
+            },
+            this
+        );
+        
+        console.log("Collisions set up successfully");
+    } catch (error) {
+        console.error('Error in setupCollisions:', error);
     }
+}
 
     /**
      * Handle collision between bird and enemy
@@ -470,17 +481,21 @@ class GameScene extends Phaser.Scene {
      * Handle collision between enemy projectile and bird
      * @param {Bird} bird - The player bird
      * @param {Phaser.GameObjects.Sprite} projectile - The enemy projectile
+     * FIXED: Completely overhauled this method to properly handle projectile collision
      */
     hitBirdWithProjectile(bird, projectile) {
         // Don't process if game is already over or objects don't exist
         if (this.isGameOver || !bird || !bird.active || !projectile || !projectile.active) return;
         
         try {
+            // FIXED: Ensure the projectile is actually an enemy projectile
+            if (!projectile.isEnemyProjectile) return;
+            
             // Check if bird is invulnerable from star powerup
             if (bird.isInvulnerable) {
                 console.log("Bird is invulnerable - projectile hit ignored");
                 
-                // Destroy the projectile
+                // Make sure to destroy the projectile so it doesn't get stuck
                 projectile.destroy();
                 return;
             }
@@ -494,17 +509,25 @@ class GameScene extends Phaser.Scene {
                     impact.destroy();
                 });
             
+            // Play hit sound
+            this.sound.play('sfx-hit', { volume: 0.7 });
+            
+            // FIXED: Ensure projectile is destroyed before game over
+            projectile.destroy();
+            
             // Bird died - game over
             if (bird.die) {
                 bird.die();
             }
             
-            // Destroy the projectile
-            projectile.destroy();
-            
             this.gameOver();
         } catch (error) {
             console.error('Error in hitBirdWithProjectile:', error);
+            
+            // Still try to destroy the projectile if there was an error
+            if (projectile && projectile.active) {
+                projectile.destroy();
+            }
         }
     }
     
@@ -1035,26 +1058,7 @@ class GameScene extends Phaser.Scene {
      * Update enemy projectiles position
      * @param {number} delta - Time since last update
      */
-    updateEnemyProjectiles(delta) {
-        try {
-            if (!this.enemyProjectiles) return;
-            
-            this.enemyProjectiles.getChildren().forEach(projectile => {
-                // Skip if inactive
-                if (!projectile || !projectile.active) return;
-                
-                // Check if projectile is off screen
-                if (projectile.x < -50 || 
-                    projectile.x > CONFIG.GAME_WIDTH + 50 || 
-                    projectile.y < -50 || 
-                    projectile.y > CONFIG.GAME_HEIGHT + 50) {
-                    projectile.destroy();
-                }
-            });
-        } catch (error) {
-            console.error('Error in updateEnemyProjectiles:', error);
-        }
-    }
+    updateEnemyProjectiles
     
     /**
      * Generate obstacle pairs (pipes)

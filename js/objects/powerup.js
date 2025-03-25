@@ -35,6 +35,13 @@ class PowerUp extends Phaser.Physics.Arcade.Sprite {
         this.colorCycle = null;
         this.colorIndex = 0;
         
+        // FIXED: Store original Y position and vertical movement variables
+        this.originalY = y;
+        this.verticalMovement = 0;
+        this.verticalDirection = 1; // 1 for down, -1 for up
+        this.verticalSpeed = 0.3;   // Reduced vertical speed
+        this.maxVerticalOffset = 20; // Maximum vertical movement distance
+        
         // Apply effects based on power-up type
         this.applyTypeEffects();
     }
@@ -140,7 +147,7 @@ class PowerUp extends Phaser.Physics.Arcade.Sprite {
      * @param {number} time - Current time
      * @param {number} delta - The delta time in ms since the last frame
      * @param {number} speed - Game speed
-     * FIX: Added active check
+     * FIXED: Power-ups now stay within reach of player with controlled vertical movement
      */
     update(time, delta, speed) {
         if (!this.active) return;
@@ -150,9 +157,31 @@ class PowerUp extends Phaser.Physics.Arcade.Sprite {
             const moveAmount = (speed - CONFIG.POWERUP_SPEED_OFFSET) * delta / 1000;
             this.x -= moveAmount;
             
-            // Add floating effect
+            // FIXED: Controlled vertical movement that keeps power-ups within screen bounds
+            // Instead of using sin(time) which can put power-ups out of reach,
+            // use a controlled oscillation that keeps power-ups close to their original position
             if (this.type !== 'star' && this.type !== 'coin') {
-                this.y += Math.sin(time / 300) * 0.5;
+                // Update vertical movement counter
+                this.verticalMovement += this.verticalSpeed * this.verticalDirection;
+                
+                // Check if we need to change direction
+                if (Math.abs(this.verticalMovement) >= this.maxVerticalOffset) {
+                    this.verticalDirection *= -1;
+                }
+                
+                // Apply vertical movement (gently float up and down)
+                this.y = this.originalY + this.verticalMovement;
+                
+                // Ensure power-up stays within screen bounds
+                const minY = 50;
+                const maxY = CONFIG.GAME_HEIGHT - 100;
+                if (this.y < minY) {
+                    this.y = minY;
+                    this.verticalDirection = 1; // Start moving down
+                } else if (this.y > maxY) {
+                    this.y = maxY;
+                    this.verticalDirection = -1; // Start moving up
+                }
             }
             
             // Remove if off screen
@@ -368,9 +397,13 @@ class PowerUpManager {
             // Don't spawn too many power-ups
             if (this.powerUps.getLength() >= 3) return;
             
-            // Random position
+            // FIXED: Improved power-up placement within screen bounds
+            // Random position with safer Y boundaries
             const x = CONFIG.GAME_WIDTH;
-            const y = Phaser.Math.Between(100, CONFIG.GAME_HEIGHT - 100);
+            // Keep power-ups within the middle area of the screen for better accessibility
+            const centerY = CONFIG.GAME_HEIGHT / 2;
+            const range = CONFIG.GAME_HEIGHT / 3; // 1/3 of screen height
+            const y = Phaser.Math.Between(centerY - range, centerY + range);
             
             // Select power-up type based on level and rarity
             this.spawnPowerUp(x, y, level);
@@ -440,6 +473,11 @@ class PowerUpManager {
                     console.error('Invalid position for power-up:', x, y);
                     return;
                 }
+                
+                // FIXED: Ensure Y position is within good range for player access
+                const minY = 100;
+                const maxY = CONFIG.GAME_HEIGHT - 150;
+                y = Phaser.Math.Clamp(y, minY, maxY);
                 
                 const powerUp = new PowerUp(
                     this.scene,
