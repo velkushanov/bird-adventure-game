@@ -53,15 +53,13 @@ class CharacterSelectScene extends Phaser.Scene {
             this.sceneListener = window.gameEvents.on('scene:restart', this.resetScene, this);
         }
         
-        // Debug text (only in debug mode)
-        if (CONFIG.DEBUG) {
-            this.debugText = this.add.text(10, CONFIG.GAME_HEIGHT - 20, 'Character Selection Debug', {
-                fontFamily: 'monospace',
-                fontSize: '12px',
-                color: '#ffff00',
-                backgroundColor: '#333333'
-            }).setDepth(100);
-        }
+        // Debug text (always show to help diagnose issues)
+        this.debugText = this.add.text(10, CONFIG.GAME_HEIGHT - 20, 'Character Selection Debug', {
+            fontFamily: 'monospace',
+            fontSize: '12px',
+            color: '#ffff00',
+            backgroundColor: '#333333'
+        }).setDepth(100);
     }
     
     update() {
@@ -78,9 +76,9 @@ class CharacterSelectScene extends Phaser.Scene {
             });
         }
         
-        // Update debug text if available
+        // Always update debug text to help diagnose issues
         if (this.debugText) {
-            this.debugText.setText(`Selected: ${this.selectedCharacter || 'None'} | Transitioning: ${this.isTransitioning}`);
+            this.debugText.setText(`Selected: ${this.selectedCharacter || 'None'} | Transitioning: ${this.isTransitioning} | Start Enabled: ${this.startButton && !this.startButton.tintTopLeft ? 'Yes' : 'No'}`);
         }
     }
     
@@ -89,6 +87,16 @@ class CharacterSelectScene extends Phaser.Scene {
      */
     createCharacterGrid() {
         this.characterPreviews = this.add.group();
+        
+        // Ensure CONFIG.CHARACTERS exists and has elements
+        if (!CONFIG.CHARACTERS || CONFIG.CHARACTERS.length === 0) {
+            console.error('CONFIG.CHARACTERS is missing or empty!');
+            // Create a default character if none exist
+            CONFIG.CHARACTERS = [
+                { id: 'blue', name: 'Blue Bird', texture: 'bird-blue', flightPower: 1.0 },
+                { id: 'red', name: 'Red Bird', texture: 'bird-red', flightPower: 1.2 }
+            ];
+        }
         
         // Calculate grid layout
         const gridWidth = 3;
@@ -188,6 +196,13 @@ class CharacterSelectScene extends Phaser.Scene {
         // Update selected character
         this.selectedCharacter = characterId;
         
+        // Store the selected character ID in localStorage to persist it
+        try {
+            localStorage.setItem('selectedCharacter', characterId);
+        } catch (e) {
+            console.warn('Could not save to localStorage:', e);
+        }
+        
         // If we have active tweens, stop them first to prevent conflicts
         this.characterPreviews.getChildren().forEach(p => {
             if (p.activeTween) {
@@ -234,9 +249,28 @@ class CharacterSelectScene extends Phaser.Scene {
             }
         });
         
-        // Enable start button - FIXED: Make sure it's visible and properly tinted
-        this.startButton.clearTint();
-        this.startText.setColor('#ffffff');
+        // IMPORTANT: Ensure the start button is enabled and properly visible
+        if (this.startButton) {
+            this.startButton.clearTint();
+            this.startButton.setInteractive();
+            
+            // Make start button more noticeable with a pulse animation
+            this.tweens.add({
+                targets: this.startButton,
+                scaleX: 1.1,
+                scaleY: 1.1,
+                duration: 300,
+                yoyo: true,
+                repeat: 2
+            });
+        }
+        
+        if (this.startText) {
+            this.startText.setColor('#ffffff');
+        }
+        
+        // Log selection for debugging
+        console.log(`Character selected: ${characterId}`);
         
         // Emit character selected event if using global events
         if (window.gameEvents) {
@@ -251,21 +285,34 @@ class CharacterSelectScene extends Phaser.Scene {
         // Determine y-position based on grid size
         const buttonY = 180 + (Math.ceil(CONFIG.CHARACTERS.length / 3) * 220) + 40;
         
+        // Ensure button is visible on screen
+        const safeButtonY = Math.min(buttonY, CONFIG.GAME_HEIGHT - 80);
+        
         // Button background
-        this.startButton = this.add.image(CONFIG.GAME_WIDTH / 2, buttonY, 'button')
+        this.startButton = this.add.image(CONFIG.GAME_WIDTH / 2, safeButtonY, 'button')
             .setInteractive()
             .setTint(0x999999) // Disabled initially
             .on('pointerdown', () => {
+                // Always log when button is clicked
+                console.log('Start button clicked. Selected character:', this.selectedCharacter);
+                
                 if (this.selectedCharacter) {
                     this.startGame();
                 } else {
                     // Prompt user to select a character
                     this.showSelectPrompt();
                 }
+            })
+            .on('pointerup', () => {
+                // Sometimes pointerdown doesn't register correctly, try with pointerup too
+                if (this.selectedCharacter && !this.isTransitioning) {
+                    console.log('Start button pointerup. Starting game...');
+                    this.startGame();
+                }
             });
             
         // Button text
-        this.startText = this.add.text(CONFIG.GAME_WIDTH / 2, buttonY, 'START GAME', {
+        this.startText = this.add.text(CONFIG.GAME_WIDTH / 2, safeButtonY, 'START GAME', {
             fontFamily: 'Arial',
             fontSize: '24px',
             color: '#aaaaaa', // Disabled initially
@@ -292,6 +339,27 @@ class CharacterSelectScene extends Phaser.Scene {
                 duration: 100
             });
         });
+        
+        // Check if there's a previously selected character in localStorage
+        try {
+            const savedCharacter = localStorage.getItem('selectedCharacter');
+            if (savedCharacter) {
+                // Find the preview container for this character
+                if (this.characterPreviews) {
+                    const previews = this.characterPreviews.getChildren();
+                    for (let i = 0; i < previews.length; i++) {
+                        const characterId = CONFIG.CHARACTERS[previews[i].index].id;
+                        if (characterId === savedCharacter) {
+                            // Auto-select the previously selected character
+                            this.selectCharacter(characterId, previews[i]);
+                            break;
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('Could not access localStorage:', e);
+        }
     }
     
     /**
@@ -350,10 +418,22 @@ class CharacterSelectScene extends Phaser.Scene {
      * Start the game with selected character
      */
     startGame() {
-        if (!this.selectedCharacter) return;
+        console.log('startGame method called');
+        
+        // Extra safety check - make sure character is selected
+        if (!this.selectedCharacter) {
+            console.error('No character selected!');
+            this.showSelectPrompt();
+            return;
+        }
         
         // Prevent double-clicking the start button
-        if (this.isTransitioning) return;
+        if (this.isTransitioning) {
+            console.log('Already transitioning, ignoring duplicate start request');
+            return;
+        }
+        
+        console.log('Starting game with character:', this.selectedCharacter);
         this.isTransitioning = true;
         
         // Play start sound
@@ -362,6 +442,29 @@ class CharacterSelectScene extends Phaser.Scene {
         // IMPORTANT: Kill all tweens to prevent memory leaks
         this.tweens.killAll();
         
+        // Ensure GameScene exists
+        if (!this.scene.get('GameScene')) {
+            console.error('GameScene not found! Creating a fallback scene.');
+            this.scene.add('GameScene', {
+                init: function(data) {
+                    this.characterId = data.characterId;
+                },
+                create: function() {
+                    this.add.text(this.cameras.main.centerX, this.cameras.main.centerY, 
+                        `Game started with ${this.characterId}!\nGame implementation missing.`, {
+                        fontFamily: 'Arial', 
+                        fontSize: '24px',
+                        color: '#ffffff',
+                        align: 'center'
+                    }).setOrigin(0.5);
+                    
+                    this.input.on('pointerdown', () => {
+                        this.scene.start('MainMenuScene');
+                    });
+                }
+            });
+        }
+        
         // Transition effect
         this.cameras.main.fade(500, 0, 0, 0, false, (camera, progress) => {
             if (progress === 1) {
@@ -369,9 +472,16 @@ class CharacterSelectScene extends Phaser.Scene {
                 this.sound.stopByKey('music-menu');
                 
                 // Start game with selected character
-                this.scene.start('GameScene', { 
-                    characterId: this.selectedCharacter
-                });
+                try {
+                    this.scene.start('GameScene', { 
+                        characterId: this.selectedCharacter
+                    });
+                    console.log('GameScene started successfully');
+                } catch (error) {
+                    console.error('Error starting GameScene:', error);
+                    // Fallback to main menu if game scene fails
+                    this.scene.start('MainMenuScene');
+                }
                 
                 // IMPORTANT: Shutdown this scene completely
                 this.scene.stop();
