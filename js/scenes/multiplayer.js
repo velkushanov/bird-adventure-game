@@ -10,6 +10,7 @@ class MultiplayerScene extends Phaser.Scene {
         this.selectedRoom = null;
         this.roomListeners = [];
         this.otherPlayers = {};
+        this.debugText = null; // For debugging
     }
     
     create() {
@@ -20,6 +21,14 @@ class MultiplayerScene extends Phaser.Scene {
             
         // Add slow scrolling
         this.bgScrollSpeed = 0.2;
+        
+        // Create debug text for multiplayer diagnostics
+        this.debugText = this.add.text(10, CONFIG.GAME_HEIGHT - 20, 'Multiplayer Debug: Initializing...', {
+            fontFamily: 'Arial',
+            fontSize: '12px',
+            color: '#ffffff',
+            backgroundColor: '#333333'
+        }).setDepth(1000);
         
         // Create the view containers
         this.lobbyContainer = this.add.container(0, 0);
@@ -33,6 +42,9 @@ class MultiplayerScene extends Phaser.Scene {
         // Create UI for each view
         this.createLobbyUI();
         this.createRoomUI();
+        
+        // Check Firebase connectivity
+        this.checkFirebaseConnection();
         
         // Check if user is authenticated
         if (!isAuthenticated()) {
@@ -55,6 +67,90 @@ class MultiplayerScene extends Phaser.Scene {
     update() {
         // Scroll background
         this.bg.tilePositionX += this.bgScrollSpeed;
+    }
+    
+    /**
+     * Check connection to Firebase
+     */
+    checkFirebaseConnection() {
+        // Update debug text
+        this.debugText.setText('Checking Firebase connection...');
+        
+        // Set a timeout for connectivity check
+        setTimeout(() => {
+            if (window.firebaseLoaded) {
+                this.debugText.setText('Firebase loaded. Checking connection...');
+                
+                try {
+                    // Try to access Firebase
+                    const connectedRef = window.firebaseRtdb ? ref(window.firebaseRtdb, '.info/connected') : null;
+                    
+                    if (connectedRef) {
+                        window.firebaseFunctions.onValueChange('.info/connected', (snap) => {
+                            if (snap.val() === true) {
+                                this.debugText.setText('Connected to Firebase ✓');
+                            } else {
+                                this.debugText.setText('WARNING: Not connected to Firebase ✗');
+                                this.showConnectionError();
+                            }
+                        });
+                    } else {
+                        this.debugText.setText('WARNING: Cannot access realtime database ✗');
+                        this.showConnectionError();
+                    }
+                } catch (err) {
+                    this.debugText.setText(`Firebase error: ${err.message}`);
+                    this.showConnectionError();
+                }
+            } else {
+                this.debugText.setText('Firebase not loaded after timeout ✗');
+                this.showConnectionError();
+            }
+        }, 3000); // Give Firebase 3 seconds to connect
+    }
+    
+    /**
+     * Show connection error message
+     */
+    showConnectionError() {
+        // Create error message container
+        const errorContainer = this.add.container(CONFIG.GAME_WIDTH/2, CONFIG.GAME_HEIGHT/2);
+        
+        // Background
+        const bg = this.add.rectangle(0, 0, 400, 200, 0x000000, 0.8)
+            .setStrokeStyle(2, 0xff0000);
+            
+        // Error message
+        const errorText = this.add.text(0, -40, 'Connection Error', {
+            fontFamily: 'Arial',
+            fontSize: '24px',
+            color: '#ff0000',
+            align: 'center'
+        }).setOrigin(0.5);
+        
+        const detailText = this.add.text(0, 0, 'Failed to connect to multiplayer server.\nCheck your internet connection and try again.', {
+            fontFamily: 'Arial',
+            fontSize: '16px',
+            color: '#ffffff',
+            align: 'center'
+        }).setOrigin(0.5);
+        
+        // Back button
+        const backButton = this.add.rectangle(0, 60, 150, 40, 0x3498db)
+            .setInteractive()
+            .on('pointerdown', () => {
+                this.scene.start('MainMenuScene');
+            });
+            
+        const backText = this.add.text(0, 60, 'Back to Menu', {
+            fontFamily: 'Arial',
+            fontSize: '16px',
+            color: '#ffffff'
+        }).setOrigin(0.5);
+        
+        // Add all to container
+        errorContainer.add([bg, errorText, detailText, backButton, backText]);
+        errorContainer.setDepth(1001); // Above everything else
     }
     
     /**
@@ -245,6 +341,14 @@ class MultiplayerScene extends Phaser.Scene {
             align: 'center'
         }).setOrigin(0.5);
         
+        // Debug text for room state
+        this.roomDebugText = this.add.text(10, CONFIG.GAME_HEIGHT - 40, '', {
+            fontFamily: 'Arial',
+            fontSize: '12px',
+            color: '#ffff00',
+            backgroundColor: '#333333'
+        }).setDepth(1000);
+        
         // Players panel
         this.playersPanel = this.add.rectangle(
             CONFIG.GAME_WIDTH / 2,
@@ -305,6 +409,7 @@ class MultiplayerScene extends Phaser.Scene {
             this.roomTitle,
             this.roomInfoPanel,
             this.roomInfoText,
+            this.roomDebugText,
             this.playersPanel,
             this.playersContainer,
             this.readyButton,
@@ -348,6 +453,15 @@ class MultiplayerScene extends Phaser.Scene {
             .setInteractive()
             .on('pointerdown', () => {
                 showAuthModal();
+                // Monitor auth state to detect when login completes
+                const checkAuth = setInterval(() => {
+                    if (isAuthenticated()) {
+                        clearInterval(checkAuth);
+                        this.authContainer.destroy();
+                        this.lobbyContainer.setVisible(true);
+                        this.loadRooms();
+                    }
+                }, 1000);
             });
             
         // Login text
@@ -389,6 +503,9 @@ class MultiplayerScene extends Phaser.Scene {
         this.loadingText.setVisible(true);
         this.noRoomsText.setVisible(false);
         
+        // Update debug text
+        this.debugText.setText('Loading rooms list...');
+        
         // Clear existing room rows
         this.roomRowsContainer.removeAll(true);
         
@@ -403,14 +520,17 @@ class MultiplayerScene extends Phaser.Scene {
                 if (rooms.length === 0) {
                     // Show no rooms message
                     this.noRoomsText.setVisible(true);
+                    this.debugText.setText('No rooms available');
                 } else {
                     // Create room rows
                     this.createRoomRows(rooms);
+                    this.debugText.setText(`Found ${rooms.length} rooms`);
                 }
             })
             .catch(error => {
                 console.error('Error loading rooms:', error);
                 this.loadingText.setText('Error loading rooms.\nTry again later.');
+                this.debugText.setText(`Error loading rooms: ${error.message}`);
             });
     }
     
@@ -470,6 +590,7 @@ class MultiplayerScene extends Phaser.Scene {
                 }).setOrigin(0.5)
                 .setInteractive()
                 .on('pointerdown', () => {
+                    this.debugText.setText(`Joining room ${room.id}...`);
                     this.joinRoom(room.id);
                 });
                 
@@ -495,6 +616,7 @@ class MultiplayerScene extends Phaser.Scene {
             bg.setInteractive();
             bg.on('pointerdown', () => {
                 if (room.players < room.maxPlayers) {
+                    this.debugText.setText(`Joining room ${room.id} (row click)...`);
                     this.joinRoom(room.id);
                 }
             });
@@ -523,14 +645,19 @@ class MultiplayerScene extends Phaser.Scene {
         // Play button sound
         this.sound.play('sfx-hit', { volume: 0.5 });
         
+        // Update debug text
+        this.debugText.setText('Creating new room...');
+        
         // Create room in Firebase
         createMultiplayerRoom()
             .then(roomId => {
+                this.debugText.setText(`Room created: ${roomId}`);
                 this.selectedRoom = roomId;
                 this.enterRoom(roomId);
             })
             .catch(error => {
                 console.error('Error creating room:', error);
+                this.debugText.setText(`Error creating room: ${error.message}`);
                 alert('Failed to create room. Please try again.');
             });
     }
@@ -543,14 +670,19 @@ class MultiplayerScene extends Phaser.Scene {
         // Play button sound
         this.sound.play('sfx-hit', { volume: 0.5 });
         
+        // Update debug text
+        this.debugText.setText(`Attempting to join room ${roomId}...`);
+        
         // Join room in Firebase
         joinMultiplayerRoom(roomId)
             .then(roomData => {
+                this.debugText.setText(`Joined room ${roomId}`);
                 this.selectedRoom = roomId;
                 this.enterRoom(roomId);
             })
             .catch(error => {
                 console.error('Error joining room:', error);
+                this.debugText.setText(`Error joining room: ${error.message}`);
                 alert('Failed to join room: ' + error.message);
                 
                 // Refresh room list
@@ -568,14 +700,21 @@ class MultiplayerScene extends Phaser.Scene {
         this.roomContainer.setVisible(true);
         this.currentView = 'room';
         
+        // Update debug text
+        this.debugText.setText(`Entered room ${roomId}, setting up listeners...`);
+        
         // Set up room state listener
         const unsubscribe = listenToRoomChanges(roomData => {
             if (roomData === null) {
                 // Room was deleted
+                this.debugText.setText('Room was closed by the host');
                 alert('The room was closed by the host.');
                 this.leaveRoom();
                 return;
             }
+            
+            // Update debug text with room data preview
+            this.roomDebugText.setText(`Room: ${roomId} | Host: ${roomData.host} | Status: ${roomData.status} | Players: ${Object.keys(roomData.players || {}).length}`);
             
             // Update room info
             this.updateRoomInfo(roomData);
@@ -585,6 +724,7 @@ class MultiplayerScene extends Phaser.Scene {
             
             // Check if game is starting
             if (roomData.status === 'playing') {
+                this.debugText.setText('Game is starting...');
                 this.startMultiplayerGame(roomData);
             }
         });
@@ -598,6 +738,9 @@ class MultiplayerScene extends Phaser.Scene {
      * @param {Object} roomData - Room data object
      */
     updateRoomInfo(roomData) {
+        // Log for debugging
+        console.log('Room info updated:', roomData);
+        
         // Update room info text
         const playerCount = Object.keys(roomData.players || {}).length;
         this.roomInfoText.setText(`Host: ${roomData.hostName}  |  Players: ${playerCount}/${roomData.maxPlayers}  |  Status: ${roomData.status}`);
@@ -634,6 +777,9 @@ class MultiplayerScene extends Phaser.Scene {
      * @param {Object} players - Players object from room data
      */
     updatePlayersList(players) {
+        // Log for debugging
+        console.log('Players list updated:', players);
+        
         // Clear existing players
         this.playersContainer.removeAll(true);
         
@@ -731,6 +877,16 @@ class MultiplayerScene extends Phaser.Scene {
                     
                     characterPreview.play(animKey);
                 }
+            } else {
+                // No character selected
+                const noCharText = this.add.text(0, 0, 'Select Character', {
+                    fontFamily: 'Arial',
+                    fontSize: '12px',
+                    color: '#ff9900',
+                    align: 'center'
+                }).setOrigin(0.5);
+                
+                slot.add(noCharText);
             }
             
             // Ready status
@@ -747,8 +903,9 @@ class MultiplayerScene extends Phaser.Scene {
             }
             
             // Add elements to slot
-            slot.add([nameText, characterPreview, readyStatus]);
+            slot.add([nameText, readyStatus]);
             if (hostBadge) slot.add(hostBadge);
+            if (characterPreview) slot.add(characterPreview);
             
             slotIndex++;
         }
@@ -773,6 +930,10 @@ class MultiplayerScene extends Phaser.Scene {
         // Play button sound
         this.sound.play('sfx-hit', { volume: 0.5 });
         
+        // Log button click for debugging
+        console.log("Ready button clicked");
+        this.debugText.setText("Ready button clicked");
+        
         // Get current user
         const currentUser = getCurrentUser();
         if (!currentUser) return;
@@ -787,12 +948,20 @@ class MultiplayerScene extends Phaser.Scene {
                     
                     // If not ready and no character selected, show character selection
                     if (newReadyStatus && !playerData.character) {
+                        this.debugText.setText("Need to select character before ready");
                         this.showCharacterSelection();
                     } else {
                         // Just update ready status
-                        setPlayerReady(newReadyStatus);
+                        this.debugText.setText(`Setting ready status to: ${newReadyStatus}`);
+                        setPlayerReady(newReadyStatus)
+                            .then(() => this.debugText.setText("Ready status updated successfully"))
+                            .catch(err => this.debugText.setText(`Error updating ready status: ${err.message}`));
                     }
                 }
+            })
+            .catch(error => {
+                console.error("Error getting room data:", error);
+                this.debugText.setText(`Error getting room data: ${error.message}`);
             });
     }
     
@@ -811,7 +980,7 @@ class MultiplayerScene extends Phaser.Scene {
             CONFIG.GAME_HEIGHT,
             0x000000,
             0.7
-        );
+        ).setInteractive(); // Make it block input to elements below
         
         // Modal panel
         const modalPanel = this.add.rectangle(
@@ -840,8 +1009,8 @@ class MultiplayerScene extends Phaser.Scene {
         // Add elements to modal
         this.characterSelectModal.add([modalBg, modalPanel, titleText, charactersContainer]);
         
-        // Make modal interactive to prevent clicking through
-        modalBg.setInteractive();
+        // Set depth to be above other UI
+        this.characterSelectModal.setDepth(100);
     }
     
     /**
@@ -910,6 +1079,7 @@ class MultiplayerScene extends Phaser.Scene {
                 this.sound.play('sfx-powerup', { volume: 0.5 });
                 
                 // Select this character
+                this.debugText.setText(`Selecting character: ${character.id}`);
                 this.selectMultiplayerCharacter(character.id);
             });
             
@@ -929,6 +1099,7 @@ class MultiplayerScene extends Phaser.Scene {
                 this.sound.play('sfx-powerup', { volume: 0.5 });
                 
                 // Select this character
+                this.debugText.setText(`Selecting character: ${character.id}`);
                 this.selectMultiplayerCharacter(character.id);
             });
             
@@ -954,13 +1125,18 @@ class MultiplayerScene extends Phaser.Scene {
      * @param {string} characterId - ID of the selected character
      */
     selectMultiplayerCharacter(characterId) {
+        // Log character selection
+        console.log(`Character selected: ${characterId}`);
+        
         // Set character selection
         setPlayerCharacter(characterId)
             .then(() => {
+                this.debugText.setText(`Character set: ${characterId}, now setting ready status`);
                 // Set ready status
                 return setPlayerReady(true);
             })
             .then(() => {
+                this.debugText.setText("Character selected and ready status set to true");
                 // Close character selection modal
                 if (this.characterSelectModal) {
                     this.characterSelectModal.destroy();
@@ -969,6 +1145,7 @@ class MultiplayerScene extends Phaser.Scene {
             })
             .catch(error => {
                 console.error('Error selecting character:', error);
+                this.debugText.setText(`Error selecting character: ${error.message}`);
                 alert('Failed to select character. Please try again.');
             });
     }
@@ -996,17 +1173,30 @@ class MultiplayerScene extends Phaser.Scene {
                     // Play button sound
                     this.sound.play('sfx-levelup', { volume: 0.7 });
                     
+                    // Update debug text
+                    this.debugText.setText("Starting multiplayer game...");
+                    
                     // Start the game
                     startMultiplayerGame()
+                        .then(() => {
+                            this.debugText.setText("Game start command sent successfully");
+                        })
                         .catch(error => {
                             console.error('Error starting game:', error);
+                            this.debugText.setText(`Error starting game: ${error.message}`);
                             alert('Failed to start game: ' + error.message);
                         });
                 } else if (playerCount <= 1) {
+                    this.debugText.setText("Can't start: Need at least 2 players");
                     alert('You need at least one more player to start a multiplayer game.');
                 } else {
+                    this.debugText.setText("Can't start: Not all players ready");
                     alert('All players must be ready to start the game.');
                 }
+            })
+            .catch(error => {
+                console.error('Error checking room data:', error);
+                this.debugText.setText(`Error checking room data: ${error.message}`);
             });
     }
     
@@ -1016,6 +1206,9 @@ class MultiplayerScene extends Phaser.Scene {
     onLeaveRoomClicked() {
         // Play button sound
         this.sound.play('sfx-hit', { volume: 0.5 });
+        
+        // Update debug text
+        this.debugText.setText("Leaving room...");
         
         // Leave the room
         this.leaveRoom();
@@ -1029,6 +1222,7 @@ class MultiplayerScene extends Phaser.Scene {
         leaveMultiplayerRoom()
             .catch(error => {
                 console.error('Error leaving room:', error);
+                this.debugText.setText(`Error leaving room: ${error.message}`);
             })
             .finally(() => {
                 // Clean up room listeners
@@ -1039,6 +1233,9 @@ class MultiplayerScene extends Phaser.Scene {
                 this.roomContainer.setVisible(false);
                 this.lobbyContainer.setVisible(true);
                 this.currentView = 'lobby';
+                
+                // Update debug text
+                this.debugText.setText("Left room, refreshing lobby");
                 
                 // Refresh room list
                 this.loadRooms();
@@ -1075,9 +1272,13 @@ class MultiplayerScene extends Phaser.Scene {
         
         const playerData = roomData.players[currentUser.uid];
         if (!playerData || !playerData.character) {
+            this.debugText.setText("Can't start: No character selected");
             alert('You need to select a character to play.');
             return;
         }
+        
+        // Update debug text
+        this.debugText.setText(`Starting game with character: ${playerData.character}`);
         
         // Hide room view
         this.roomContainer.setVisible(false);
