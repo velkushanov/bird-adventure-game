@@ -14,7 +14,7 @@ A fun, side-scrolling game that combines Flappy Bird mechanics with Super Mario 
 
 ## Demo
 
-[Play the game online](https://your-github-username.github.io/bird-adventure-game) (Replace with your actual hosting URL)
+[Play the game online](https://velkushanov.github.io/bird-adventure-game/)
 
 ## Installation
 
