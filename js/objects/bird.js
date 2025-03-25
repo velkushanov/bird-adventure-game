@@ -561,66 +561,74 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
     shootFireball() {
         if (!this.isShooting || this.isDead) return null;
         
-        // Implement cooldown to prevent too many fireballs
-        const currentTime = this.scene.time.now;
-        if (currentTime - this.lastFireballTime < CONFIG.FIREBALL_RATE) {
-            return null;
-        }
-        
-        // Update last fireball time
-        this.lastFireballTime = currentTime;
-        
-        // Access the fireballs group from the scene
-        const fireballsGroup = this.scene.fireballs;
-        
-        if (!fireballsGroup) {
-            console.error("Fireballs group not found in scene");
-            return null;
-        }
-        
-        // Create fireball with proper physics setup
-        const fireball = fireballsGroup.create(
-            this.x + this.width / 2,
-            this.y,
-            'fireball'
-        );
-        
-        if (!fireball || !fireball.body) {
-            console.error("Failed to create fireball or fireball has no physics body");
-            return null;
-        }
-        
-        // Configure fireball physics
-        fireball.body.allowGravity = false;
-        fireball.setVelocityX(CONFIG.FIREBALL_SPEED);
-        
-        // Set a proper collision size
-        fireball.body.setSize(fireball.width * 0.8, fireball.height * 0.8);
-        
-        // Mark fireball as managed to prevent double destruction
-        fireball.managed = true;
-        
-        // Add a lifespan to ensure fireballs don't stay forever
-        this.scene.time.delayedCall(5000, () => {
-            if (fireball && fireball.active && !fireball.destroyed) {
-                fireball.destroyed = true;
-                fireball.destroy();
+        try {
+            // Implement cooldown to prevent too many fireballs
+            const currentTime = this.scene.time.now;
+            if (currentTime - this.lastFireballTime < CONFIG.FIREBALL_RATE) {
+                return null;
             }
-        });
-        
-        // Add rotation animation via tweens
-        this.scene.tweens.add({
-            targets: fireball,
-            angle: 360,
-            duration: 1000,
-            repeat: -1
-        });
-        
-        // Play sound
-        this.scene.sound.play('sfx-fireball', { volume: 0.5 });
-        
-        // Return the fireball
-        return fireball;
+            
+            // Update last fireball time
+            this.lastFireballTime = currentTime;
+            
+            // Access the fireballs group from the scene - very important to get this right
+            if (!this.scene.fireballs) {
+                console.error("Fireballs group not found in scene");
+                return null;
+            }
+            
+            // Create fireball with proper physics setup
+            const fireball = this.scene.fireballs.create(
+                this.x + this.width / 2,
+                this.y,
+                'fireball'
+            );
+            
+            if (!fireball) {
+                console.error("Failed to create fireball");
+                return null;
+            }
+            
+            // Configure fireball physics
+            fireball.body.allowGravity = false;
+            fireball.setVelocityX(CONFIG.FIREBALL_SPEED);
+            
+            // Set a proper collision size
+            fireball.body.setSize(fireball.width * 0.8, fireball.height * 0.8);
+            
+            // Add custom properties to the fireball
+            fireball.isFireball = true;
+            fireball.ownerBird = this;
+            fireball.birthTime = currentTime;
+            
+            // Play sound
+            this.scene.sound.play('sfx-fireball', { volume: 0.5 });
+            
+            // Add a safer cleanup timer using Phaser's timer system
+            this.scene.time.addEvent({
+                delay: 5000,
+                callback: () => {
+                    if (fireball && fireball.active && !fireball.destroyed) {
+                        fireball.destroyed = true;
+                        fireball.destroy();
+                    }
+                },
+                callbackScope: this
+            });
+            
+            // Add rotation animation
+            this.scene.tweens.add({
+                targets: fireball,
+                angle: 360,
+                duration: 1000,
+                repeat: -1
+            });
+            
+            return fireball;
+        } catch (error) {
+            console.error("Error shooting fireball:", error);
+            return null;
+        }
     }
     
     /**

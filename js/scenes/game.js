@@ -109,7 +109,12 @@ class GameScene extends Phaser.Scene {
         this.obstacles = this.physics.add.group();
         this.enemies = this.physics.add.group();
         this.powerUps = this.physics.add.group();
-        this.fireballs = this.physics.add.group();
+        
+        // Create fireball group with physics
+        this.fireballs = this.physics.add.group({
+            allowGravity: false,
+            immovable: false
+        });
         
         // Create a group for other players (multiplayer)
         this.multiplayer = this.add.group();
@@ -458,7 +463,7 @@ class GameScene extends Phaser.Scene {
         this.updateObstacles(delta);
         this.updateEnemies(delta);
         this.updatePowerUps(delta);
-        this.updateFireballs(delta);
+        this.updateFireballs(delta); // Make sure this line is added!
         
         // Auto-shoot if flower power is active
         if (this.isShooting && time > this.lastFireTime + CONFIG.FIREBALL_RATE) {
@@ -568,19 +573,18 @@ class GameScene extends Phaser.Scene {
      * @param {number} delta - Delta time since last frame
      */
     updateFireballs(delta) {
-        // Move fireballs forward - only update if not destroyed
-        this.fireballs.getChildren().forEach(fireball => {
-            if (fireball.destroyed) return;
-            
-            // Rotate the fireball for effect
-            fireball.angle += 5;
-            
-            // Remove if off screen
-            if (fireball.x > CONFIG.GAME_WIDTH) {
-                fireball.destroyed = true;
-                fireball.destroy();
-            }
-        });
+        if (this.fireballs) {
+            this.fireballs.getChildren().forEach(fireball => {
+                // Skip if already marked for destruction
+                if (fireball.destroyed) return;
+                
+                // Check if fireball is off screen
+                if (fireball.x > CONFIG.GAME_WIDTH + 50) {
+                    fireball.destroyed = true;
+                    fireball.destroy();
+                }
+            });
+        }
     }
     
     /**
@@ -814,10 +818,11 @@ class GameScene extends Phaser.Scene {
      * @returns {Phaser.GameObjects.Sprite} The created fireball or null if can't shoot
      */
     shootFireball() {
-        // Simply call the bird's shootFireball method if it exists
-        if (this.bird && this.bird.shootFireball) {
-            this.bird.shootFireball();
+        // Only call the bird's shootFireball if it exists
+        if (this.bird && typeof this.bird.shootFireball === 'function') {
+            return this.bird.shootFireball();
         }
+        return null;
     }
     
     /**
@@ -826,24 +831,30 @@ class GameScene extends Phaser.Scene {
      * @param {Phaser.GameObjects.Sprite} enemy - The enemy hit
      */
     hitEnemyWithFireball(fireball, enemy) {
-        // Mark as destroyed to prevent double destruction
-        if (!fireball || !enemy || fireball.destroyed || enemy.destroyed) return;
+        // Extra safeguards
+        if (!fireball || !enemy) return;
+        if (fireball.destroyed || enemy.destroyed) return;
         
-        fireball.destroyed = true;
-        enemy.destroyed = true;
-        
-        // Destroy both objects
-        fireball.destroy();
-        enemy.destroy();
-        
-        // Increase score
-        this.increaseScore(CONFIG.BASE_ENEMY_POINTS);
-        
-        // Play sound
-        this.sound.play('sfx-hit', { volume: 0.7 });
-        
-        // Add particles/effect
-        this.addDestructionEffect(enemy.x, enemy.y);
+        try {
+            // Mark as destroyed first
+            fireball.destroyed = true;
+            enemy.destroyed = true;
+            
+            // Play sound before destroying objects
+            this.sound.play('sfx-hit', { volume: 0.7 });
+            
+            // Add particles/effect before destroying objects
+            this.addDestructionEffect(enemy.x, enemy.y);
+            
+            // Increase score
+            this.increaseScore(CONFIG.BASE_ENEMY_POINTS);
+            
+            // NOW destroy both objects
+            fireball.destroy();
+            enemy.destroy();
+        } catch (error) {
+            console.error("Error in hitEnemyWithFireball:", error);
+        }
     }
     
     /**
