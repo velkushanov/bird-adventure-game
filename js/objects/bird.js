@@ -497,10 +497,12 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
         // Update last fireball time
         this.lastFireballTime = currentTime;
         
-        // Get the fireballs group from the scene (make sure it exists)
-        const fireballsGroup = this.scene.fireballs;
+        // Get the fireballs group from the scene or from the bird property
+        // This is the key fix - we try both ways to get the fireballs group
+        const fireballsGroup = this.fireballs || this.scene.fireballs;
+        
         if (!fireballsGroup) {
-            console.error("Fireballs group not found in scene");
+            console.error("Fireballs group not found in bird or scene");
             return null;
         }
         

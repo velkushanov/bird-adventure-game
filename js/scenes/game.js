@@ -138,6 +138,9 @@ class GameScene extends Phaser.Scene {
         
         // Store character properties
         this.bird.flightPower = character.flightPower;
+        
+        // IMPORTANT: Give the bird access to the fireballs group
+        this.bird.fireballs = this.fireballs;
     }
     
     /**
@@ -778,10 +781,16 @@ class GameScene extends Phaser.Scene {
      * Activate flower power-up (shooting)
      */
     activateFlower() {
-        // Set shooting flag
+        // Set shooting flag for the game scene
         this.isShooting = true;
         this.shootIndicator.setVisible(true);
         this.lastFireTime = this.time.now;
+        
+        // Also set shooting flag for the bird (this is the key fix)
+        if (this.bird) {
+            this.bird.isShooting = true;
+            this.bird.lastFireballTime = this.time.now;
+        }
         
         // Clear any existing flower timer
         if (this.flowerTimer) {
@@ -792,60 +801,77 @@ class GameScene extends Phaser.Scene {
         this.flowerTimer = this.time.delayedCall(CONFIG.FLOWER_DURATION, () => {
             this.isShooting = false;
             this.shootIndicator.setVisible(false);
+            
+            // Also update bird's state
+            if (this.bird) {
+                this.bird.isShooting = false;
+            }
         }, [], this);
     }
     
     /**
      * Shoot a fireball
+     * @returns {Phaser.GameObjects.Sprite} The created fireball or null if can't shoot
      */
     shootFireball() {
-        if (!this.isShooting || this.isGameOver || !this.bird) return;
+        if (!this.isShooting || this.isDead) return null;
         
-        // Use the bird's shootFireball method directly instead of duplicating code
-        this.bird.shootFireball();
+        // Implement cooldown to prevent too many fireballs
+        const currentTime = this.scene.time.now;
+        if (currentTime - this.lastFireballTime < CONFIG.FIREBALL_RATE) {
+            return null;
+        }
         
-        // Update last fire time (for auto-shooting)
-        this.lastFireTime = this.time.now;
-    }
-    
-    /**
-     * Handle collision between bird and obstacle
-     * @param {Phaser.GameObjects.Sprite} bird - The player bird
-     * @param {Phaser.GameObjects.Sprite} obstacle - The obstacle hit
-     */
-    hitObstacle(bird, obstacle) {
-        if (bird.isInvulnerable || this.isBig) {
-            // If bird is invulnerable or big, destroy obstacle
-            obstacle.destroy();
-            this.increaseScore(CONFIG.BIG_OBSTACLE_POINTS);
-            this.sound.play('sfx-break', { volume: 0.7 });
-            
-            // Add particles/effect
-            this.addDestructionEffect(obstacle.x, obstacle.y);
-        } else {
-            // Game over
-            this.gameOver();
+        // Update last fireball time
+        this.lastFireballTime = currentTime;
+        
+        // Get the fireballs group from the scene or from the bird property
+        // This is the key fix - we try both ways to get the fireballs group
+        const fireballsGroup = this.fireballs || this.scene.fireballs;
+        
+        if (!fireballsGroup) {
+            console.error("Fireballs group not found in bird or scene");
+            return null;
         }
-    }
-    
-    /**
-     * Handle collision between bird and enemy
-     * @param {Phaser.GameObjects.Sprite} bird - The player bird
-     * @param {Phaser.GameObjects.Sprite} enemy - The enemy hit
-     */
-    hitEnemy(bird, enemy) {
-        if (bird.isInvulnerable || this.isBig) {
-            // If bird is invulnerable or big, destroy enemy
-            enemy.destroy();
-            this.increaseScore(CONFIG.BASE_ENEMY_POINTS);
-            this.sound.play('sfx-stomp', { volume: 0.7 });
-            
-            // Add particles/effect
-            this.addDestructionEffect(enemy.x, enemy.y);
-        } else {
-            // Game over
-            this.gameOver();
-        }
+        
+        // Create fireball with proper physics setup
+        const fireball = fireballsGroup.create(
+            this.x + this.width / 2,
+            this.y,
+            'fireball'
+        );
+        
+        // Configure fireball physics
+        fireball.body.allowGravity = false;
+        fireball.setVelocityX(CONFIG.FIREBALL_SPEED);
+        
+        // Set a proper collision size
+        fireball.body.setSize(fireball.width * 0.8, fireball.height * 0.8);
+        
+        // Mark fireball as managed to prevent double destruction
+        fireball.managed = true;
+        
+        // Add a lifespan to ensure fireballs don't stay forever
+        this.scene.time.delayedCall(5000, () => {
+            if (fireball && fireball.active && !fireball.destroyed) {
+                fireball.destroyed = true;
+                fireball.destroy();
+            }
+        });
+        
+        // Add rotation animation via tweens (without onComplete to avoid race conditions)
+        this.scene.tweens.add({
+            targets: fireball,
+            angle: 360,
+            duration: 1000,
+            repeat: -1
+        });
+        
+        // Play sound
+        this.scene.sound.play('sfx-fireball', { volume: 0.5 });
+        
+        // Return the fireball
+        return fireball;
     }
     
     /**
