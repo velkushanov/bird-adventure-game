@@ -1,6 +1,7 @@
 /**
  * Bird Class
  * Represents the player-controlled bird character
+ * FIXED: Added proper cleanup for powerups and fixed event handling
  */
 class Bird extends Phaser.Physics.Arcade.Sprite {
     /**
@@ -62,6 +63,14 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
         
         // Fireball cooldown
         this.lastFireballTime = 0;
+        
+        // FIX: Initialize tween references
+        this.mushroomBlinkTween = null;
+        this.flowerBlinkTween = null;
+        this.invulnerabilityBlinkTween = null;
+        this.growTween = null;
+        this.glowTween = null;
+        this.starTimer = null;
     }
     
     /**
@@ -95,6 +104,7 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
     
     /**
      * Setup event listeners
+     * FIX: Standardized event names to match Game scene
      */
     setupEventListeners() {
         // Listen for game events that affect the bird
@@ -109,14 +119,14 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
      * @param {number} delta - Time since last update
      */
     update(time, delta) {
-        if (this.isDead) return;
+        if (this.isDead || !this.active) return;
         
         // Add rotation based on velocity for visual effect
         const targetRotation = Phaser.Math.Clamp(this.body.velocity.y / 600, -0.3, 0.3);
         this.rotation = Phaser.Math.Linear(this.rotation, targetRotation, 0.1);
         
         // Update trail effect if active
-        if (this.trailEmitter) {
+        if (this.trailEmitter && this.active) {
             this.trailEmitter.setPosition(this.x - this.width / 2, this.y);
         }
     }
@@ -125,7 +135,7 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
      * Make the bird flap its wings
      */
     flap() {
-        if (this.isDead) return;
+        if (this.isDead || !this.active) return;
         
         // Apply upward velocity
         const flapPower = CONFIG.BIRD_FLAP_VELOCITY * this.flightPower;
@@ -140,172 +150,289 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
     
     /**
      * Activate mushroom power-up (size increase)
+     * FIX: Added active checks and improved cleanup
      */
     activateMushroom() {
-        // Already big, just reset the timer
-        if (this.isBig) {
-            if (this.mushroomTimer) this.mushroomTimer.remove();
-            if (this.mushroomBlinkTimer) this.mushroomBlinkTimer.remove();
-            if (this.mushroomBlinkTween) this.mushroomBlinkTween.stop();
-        } else {
-            // Become big
-            this.isBig = true;
-            this.setScale(1.5);
+        if (!this.active) return;
+        
+        try {
+            // Already big, just reset the timer
+            if (this.isBig) {
+                this.resetMushroomTimers();
+            } else {
+                // Become big
+                this.isBig = true;
+                this.setScale(1.5);
+                
+                // Play transformation sound
+                this.scene.sound.play('sfx-powerup', { volume: 0.7 });
+                
+                // Add growth effect
+                this.addGrowEffect();
+                
+                // Emit event so game scene knows state changed
+                this.emit('powerup-state-changed', { type: 'mushroom', active: true });
+            }
             
-            // Play transformation sound
-            this.scene.sound.play('sfx-powerup', { volume: 0.7 });
+            // Set timer for power-up duration
+            this.mushroomTimer = this.scene.time.delayedCall(CONFIG.MUSHROOM_DURATION, () => {
+                if (!this.active) return;
+                
+                // Return to normal size
+                this.isBig = false;
+                this.setScale(1);
+                
+                // Add shrink effect
+                this.addShrinkEffect();
+                
+                // Clear blinking effect
+                if (this.mushroomBlinkTween) {
+                    this.mushroomBlinkTween.stop();
+                    this.mushroomBlinkTween = null;
+                    if (this.active) {
+                        this.clearTint();
+                        this.alpha = 1;
+                    }
+                }
+                
+                // Emit event so game scene knows state changed
+                this.emit('powerup-state-changed', { type: 'mushroom', active: false });
+            }, [], this);
             
-            // Add growth effect
-            this.addGrowEffect();
+            // Set timer for blinking warning (1 second before expiration)
+            this.mushroomBlinkTimer = this.scene.time.delayedCall(CONFIG.MUSHROOM_DURATION - 1000, () => {
+                if (!this.active) return;
+                
+                // Start blinking effect
+                this.mushroomBlinkTween = this.scene.tweens.add({
+                    targets: this,
+                    alpha: 0.5,
+                    duration: 100,
+                    yoyo: true,
+                    repeat: 9, // 10 blinks in 1 second
+                    onComplete: () => {
+                        if (this.active) this.alpha = 1; // Reset alpha when done
+                    }
+                });
+            }, [], this);
+        } catch (error) {
+            console.error('Error in activateMushroom:', error);
+        }
+    }
+    
+    /**
+     * Reset mushroom timers
+     * FIX: Extracted common code to avoid duplication
+     */
+    resetMushroomTimers() {
+        if (this.mushroomTimer) {
+            this.mushroomTimer.remove();
+            this.mushroomTimer = null;
         }
         
-        // Set timer for power-up duration
-        this.mushroomTimer = this.scene.time.delayedCall(CONFIG.MUSHROOM_DURATION, () => {
-            // Return to normal size
-            this.isBig = false;
-            this.setScale(1);
-            
-            // Add shrink effect
-            this.addShrinkEffect();
-            
-            // Clear blinking effect
-            if (this.mushroomBlinkTween) {
-                this.mushroomBlinkTween.stop();
-                this.clearTint();
-                this.alpha = 1;
-            }
-        }, [], this);
+        if (this.mushroomBlinkTimer) {
+            this.mushroomBlinkTimer.remove();
+            this.mushroomBlinkTimer = null;
+        }
         
-        // Set timer for blinking warning (1 second before expiration)
-        this.mushroomBlinkTimer = this.scene.time.delayedCall(CONFIG.MUSHROOM_DURATION - 1000, () => {
-            // Start blinking effect
-            this.mushroomBlinkTween = this.scene.tweens.add({
-                targets: this,
-                alpha: 0.5,
-                duration: 100,
-                yoyo: true,
-                repeat: 9, // 10 blinks in 1 second
-                onComplete: () => {
-                    if (this.active) this.alpha = 1; // Reset alpha when done
-                }
-            });
-        }, [], this);
+        if (this.mushroomBlinkTween) {
+            this.mushroomBlinkTween.stop();
+            this.mushroomBlinkTween = null;
+        }
     }
     
     /**
      * Activate flower power-up (shooting)
+     * FIX: Added active checks and improved cleanup
      */
     activateFlower() {
-        // Already shooting, just reset the timer
-        if (this.isShooting) {
-            if (this.flowerTimer) this.flowerTimer.remove();
-            if (this.flowerBlinkTimer) this.flowerBlinkTimer.remove();
-            if (this.flowerBlinkTween) this.flowerBlinkTween.stop();
-        } else {
-            // Enable shooting
-            this.isShooting = true;
+        if (!this.active) return;
+        
+        try {
+            // Already shooting, just reset the timer
+            if (this.isShooting) {
+                this.resetFlowerTimers();
+            } else {
+                // Enable shooting
+                this.isShooting = true;
+                
+                // Play power-up sound
+                this.scene.sound.play('sfx-powerup', { volume: 0.7 });
+                
+                // Add glow effect
+                this.addGlowEffect();
+                
+                // Emit event so game scene knows state changed
+                this.emit('powerup-state-changed', { type: 'flower', active: true });
+            }
             
-            // Play power-up sound
-            this.scene.sound.play('sfx-powerup', { volume: 0.7 });
+            // Set timer for power-up duration
+            this.flowerTimer = this.scene.time.delayedCall(CONFIG.FLOWER_DURATION, () => {
+                if (!this.active) return;
+                
+                // Disable shooting
+                this.isShooting = false;
+                
+                // Remove glow effect
+                this.removeGlowEffect();
+                
+                // Clear blinking effect
+                if (this.flowerBlinkTween) {
+                    this.flowerBlinkTween.stop();
+                    this.flowerBlinkTween = null;
+                    if (this.active) {
+                        this.clearTint();
+                        this.alpha = 1;
+                    }
+                }
+                
+                // Emit event so game scene knows state changed
+                this.emit('powerup-state-changed', { type: 'flower', active: false });
+            }, [], this);
             
-            // Add glow effect
-            this.addGlowEffect();
+            // Set timer for blinking warning (1 second before expiration)
+            this.flowerBlinkTimer = this.scene.time.delayedCall(CONFIG.FLOWER_DURATION - 1000, () => {
+                if (!this.active) return;
+                
+                // Start blinking effect
+                this.flowerBlinkTween = this.scene.tweens.add({
+                    targets: this,
+                    alpha: 0.5,
+                    duration: 100,
+                    yoyo: true,
+                    repeat: 9, // 10 blinks in 1 second
+                    onComplete: () => {
+                        if (this.active) this.alpha = 1; // Reset alpha when done
+                    }
+                });
+            }, [], this);
+        } catch (error) {
+            console.error('Error in activateFlower:', error);
+        }
+    }
+    
+    /**
+     * Reset flower timers
+     * FIX: Extracted common code to avoid duplication
+     */
+    resetFlowerTimers() {
+        if (this.flowerTimer) {
+            this.flowerTimer.remove();
+            this.flowerTimer = null;
         }
         
-        // Set timer for power-up duration
-        this.flowerTimer = this.scene.time.delayedCall(CONFIG.FLOWER_DURATION, () => {
-            // Disable shooting
-            this.isShooting = false;
-            
-            // Remove glow effect
-            this.removeGlowEffect();
-            
-            // Clear blinking effect
-            if (this.flowerBlinkTween) {
-                this.flowerBlinkTween.stop();
-                this.clearTint();
-                this.alpha = 1;
-            }
-        }, [], this);
+        if (this.flowerBlinkTimer) {
+            this.flowerBlinkTimer.remove();
+            this.flowerBlinkTimer = null;
+        }
         
-        // Set timer for blinking warning (1 second before expiration)
-        this.flowerBlinkTimer = this.scene.time.delayedCall(CONFIG.FLOWER_DURATION - 1000, () => {
-            // Start blinking effect
-            this.flowerBlinkTween = this.scene.tweens.add({
-                targets: this,
-                alpha: 0.5,
-                duration: 100,
-                yoyo: true,
-                repeat: 9, // 10 blinks in 1 second
-                onComplete: () => {
-                    if (this.active) this.alpha = 1; // Reset alpha when done
-                }
-            });
-        }, [], this);
+        if (this.flowerBlinkTween) {
+            this.flowerBlinkTween.stop();
+            this.flowerBlinkTween = null;
+        }
     }
     
     /**
      * Activate star power-up (invulnerability)
+     * FIX: Added active checks and improved cleanup
      */
     activateInvulnerability() {
-        // Already invulnerable, just reset the timer
-        if (this.isInvulnerable) {
-            if (this.invulnerabilityTimer) this.invulnerabilityTimer.remove();
-            if (this.invulnerabilityBlinkTimer) this.invulnerabilityBlinkTimer.remove();
-            if (this.invulnerabilityBlinkTween) this.invulnerabilityBlinkTween.stop();
-        } else {
-            // Become invulnerable
-            this.isInvulnerable = true;
+        if (!this.active) return;
+        
+        try {
+            // Already invulnerable, just reset the timer
+            if (this.isInvulnerable) {
+                this.resetInvulnerabilityTimers();
+            } else {
+                // Become invulnerable
+                this.isInvulnerable = true;
+                
+                // Play star power-up sound
+                this.scene.sound.play('sfx-powerup', { volume: 0.8 });
+                
+                // Add star effect (flashing and trail)
+                this.addStarEffect();
+                
+                // Emit event so game scene knows state changed
+                this.emit('powerup-state-changed', { type: 'star', active: true });
+            }
             
-            // Play star power-up sound
-            this.scene.sound.play('sfx-powerup', { volume: 0.8 });
+            // Set timer for power-up duration
+            this.invulnerabilityTimer = this.scene.time.delayedCall(10000, () => {
+                if (!this.active) return;
+                
+                // Disable invulnerability
+                this.isInvulnerable = false;
+                
+                // Remove star effect
+                this.removeStarEffect();
+                
+                // Clear blinking effect
+                if (this.invulnerabilityBlinkTween) {
+                    this.invulnerabilityBlinkTween.stop();
+                    this.invulnerabilityBlinkTween = null;
+                    if (this.active) {
+                        this.alpha = 1;
+                    }
+                }
+                
+                // Emit event so game scene knows state changed
+                this.emit('powerup-state-changed', { type: 'star', active: false });
+            }, [], this);
             
-            // Add star effect (flashing and trail)
-            this.addStarEffect();
+            // Set timer for blinking warning (1 second before expiration)
+            this.invulnerabilityBlinkTimer = this.scene.time.delayedCall(9000, () => { // 10000 - 1000 = 9000
+                if (!this.active) return;
+                
+                // Start more intense blinking effect
+                this.invulnerabilityBlinkTween = this.scene.tweens.add({
+                    targets: this,
+                    alpha: 0.3,
+                    duration: 100,
+                    yoyo: true,
+                    repeat: 9, // 10 blinks in 1 second
+                    onComplete: () => {
+                        if (this.active) this.alpha = 1; // Reset alpha when done
+                    }
+                });
+            }, [], this);
+        } catch (error) {
+            console.error('Error in activateInvulnerability:', error);
+        }
+    }
+    
+    /**
+     * Reset invulnerability timers
+     * FIX: Extracted common code to avoid duplication
+     */
+    resetInvulnerabilityTimers() {
+        if (this.invulnerabilityTimer) {
+            this.invulnerabilityTimer.remove();
+            this.invulnerabilityTimer = null;
         }
         
-        // Set timer for power-up duration
-        this.invulnerabilityTimer = this.scene.time.delayedCall(10000, () => {
-            // Disable invulnerability
-            this.isInvulnerable = false;
-            
-            // Remove star effect
-            this.removeStarEffect();
-            
-            // Clear blinking effect
-            if (this.invulnerabilityBlinkTween) {
-                this.invulnerabilityBlinkTween.stop();
-                this.alpha = 1;
-            }
-        }, [], this);
+        if (this.invulnerabilityBlinkTimer) {
+            this.invulnerabilityBlinkTimer.remove();
+            this.invulnerabilityBlinkTimer = null;
+        }
         
-        // Set timer for blinking warning (1 second before expiration)
-        this.invulnerabilityBlinkTimer = this.scene.time.delayedCall(9000, () => { // 10000 - 1000 = 9000
-            // Start more intense blinking effect
-            if (this.starTimer) {
-                // Don't remove the star timer, just add additional blinking
-                // this.starTimer.remove();
-                // this.starTimer = null;
-            }
-            
-            this.invulnerabilityBlinkTween = this.scene.tweens.add({
-                targets: this,
-                alpha: 0.3,
-                duration: 100,
-                yoyo: true,
-                repeat: 9, // 10 blinks in 1 second
-                onComplete: () => {
-                    if (this.active) this.alpha = 1; // Reset alpha when done
-                }
-            });
-        }, [], this);
+        if (this.invulnerabilityBlinkTween) {
+            this.invulnerabilityBlinkTween.stop();
+            this.invulnerabilityBlinkTween = null;
+        }
+        
+        if (this.starTimer) {
+            this.starTimer.remove();
+            this.starTimer = null;
+        }
     }
     
     /**
      * Make the bird die
+     * FIX: Added active check
      */
     die() {
-        if (this.isDead) return;
+        if (this.isDead || !this.active) return;
         
         // Set dead state
         this.isDead = true;
@@ -334,123 +461,151 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
     
     /**
      * Clear all active power-ups
+     * FIX: More comprehensive cleanup
      */
     clearPowerUps() {
-        // Clear mushroom power-up
-        if (this.mushroomTimer) {
-            this.mushroomTimer.remove();
-            this.mushroomTimer = null;
+        try {
+            // Clear mushroom power-up
+            this.resetMushroomTimers();
+            this.isBig = false;
+            if (this.active) this.setScale(1);
+            
+            // Clear flower power-up
+            this.resetFlowerTimers();
+            this.isShooting = false;
+            this.removeGlowEffect();
+            
+            // Clear star power-up
+            this.resetInvulnerabilityTimers();
+            this.isInvulnerable = false;
+            this.removeStarEffect();
+            
+            // Make sure alpha and tint are reset
+            if (this.active) {
+                this.alpha = 1;
+                this.clearTint();
+            }
+        } catch (error) {
+            console.error('Error in clearPowerUps:', error);
         }
-        this.isBig = false;
-        this.setScale(1);
-        
-        // Clear flower power-up
-        if (this.flowerTimer) {
-            this.flowerTimer.remove();
-            this.flowerTimer = null;
-        }
-        this.isShooting = false;
-        this.removeGlowEffect();
-        
-        // Clear star power-up
-        if (this.invulnerabilityTimer) {
-            this.invulnerabilityTimer.remove();
-            this.invulnerabilityTimer = null;
-        }
-        this.isInvulnerable = false;
-        this.removeStarEffect();
     }
     
     /**
      * Add growth effect when mushroom is activated
+     * FIX: Added safe tween handling
      */
     addGrowEffect() {
-        // Scaling animation
-        this.scene.tweens.add({
-            targets: this,
-            scale: 1.5,
-            duration: 300,
-            ease: 'Back.easeOut',
-            onComplete: () => {
-                // Add pulsing effect
-                this.growTween = this.scene.tweens.add({
-                    targets: this,
-                    scale: { from: 1.5, to: 1.6 },
-                    duration: 500,
-                    yoyo: true,
-                    repeat: -1
-                });
-            }
-        });
+        if (!this.active) return;
         
-        // Particle burst
-        const particles = this.scene.add.particles('particle');
-        const emitter = particles.createEmitter({
-            x: this.x,
-            y: this.y,
-            speed: { min: 50, max: 100 },
-            scale: { start: 0.5, end: 0 },
-            lifespan: 500,
-            quantity: 20
-        });
-        
-        // Destroy particles after emitting
-        this.scene.time.delayedCall(500, () => {
-            emitter.stop();
-            this.scene.time.delayedCall(500, () => {
-                particles.destroy();
+        try {
+            // Scaling animation
+            this.scene.tweens.add({
+                targets: this,
+                scale: 1.5,
+                duration: 300,
+                ease: 'Back.easeOut',
+                onComplete: () => {
+                    if (!this.active) return;
+                    
+                    // Add pulsing effect
+                    this.growTween = this.scene.tweens.add({
+                        targets: this,
+                        scale: { from: 1.5, to: 1.6 },
+                        duration: 500,
+                        yoyo: true,
+                        repeat: -1
+                    });
+                }
             });
-        });
+            
+            // Particle burst
+            const particles = this.scene.add.particles('particle');
+            const emitter = particles.createEmitter({
+                x: this.x,
+                y: this.y,
+                speed: { min: 50, max: 100 },
+                scale: { start: 0.5, end: 0 },
+                lifespan: 500,
+                quantity: 20
+            });
+            
+            // Destroy particles after emitting
+            this.scene.time.delayedCall(500, () => {
+                emitter.stop();
+                this.scene.time.delayedCall(500, () => {
+                    particles.destroy();
+                });
+            });
+        } catch (error) {
+            console.error('Error in addGrowEffect:', error);
+        }
     }
     
     /**
      * Add shrink effect when mushroom power-up expires
+     * FIX: Added safe tween handling
      */
     addShrinkEffect() {
-        // Stop grow tween if running
-        if (this.growTween) {
-            this.growTween.stop();
-            this.growTween = null;
-        }
+        if (!this.active) return;
         
-        // Scaling animation
-        this.scene.tweens.add({
-            targets: this,
-            scale: 1,
-            duration: 300,
-            ease: 'Back.easeIn'
-        });
+        try {
+            // Stop grow tween if running
+            if (this.growTween) {
+                this.growTween.stop();
+                this.growTween = null;
+            }
+            
+            // Scaling animation
+            this.scene.tweens.add({
+                targets: this,
+                scale: 1,
+                duration: 300,
+                ease: 'Back.easeIn'
+            });
+        } catch (error) {
+            console.error('Error in addShrinkEffect:', error);
+        }
     }
     
     /**
      * Add glow effect when flower is activated
+     * FIX: Added active check
      */
     addGlowEffect() {
-        // Create glow sprite
-        this.glow = this.scene.add.sprite(this.x, this.y, 'particle')
-            .setScale(3)
-            .setAlpha(0.5)
-            .setTint(0xff9900);
-            
-        // Attach to bird
-        this.glow.setDepth(-1);
+        if (!this.active) return;
         
-        // Add pulsing effect
-        this.glowTween = this.scene.tweens.add({
-            targets: this.glow,
-            alpha: { from: 0.3, to: 0.5 },
-            scale: { from: 2.5, to: 3 },
-            duration: 500,
-            yoyo: true,
-            repeat: -1
-        });
+        try {
+            // Create glow sprite
+            this.glow = this.scene.add.sprite(this.x, this.y, 'particle')
+                .setScale(3)
+                .setAlpha(0.5)
+                .setTint(0xff9900);
+                
+            // Attach to bird
+            this.glow.setDepth(-1);
+            
+            // Add pulsing effect
+            this.glowTween = this.scene.tweens.add({
+                targets: this.glow,
+                alpha: { from: 0.3, to: 0.5 },
+                scale: { from: 2.5, to: 3 },
+                duration: 500,
+                yoyo: true,
+                repeat: -1
+            });
+        } catch (error) {
+            console.error('Error in addGlowEffect:', error);
+        }
     }
     
     /**
      * Remove glow effect when flower power-up expires
+     * FIX: Added null checks
      */
     removeGlowEffect() {
-        if (this.glow) {
+        if (!this.glow) return;
+        
+        try {
             // Fade out animation
             this.scene.tweens.add({
                 targets: this.glow,
@@ -470,64 +625,97 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
                 this.glowTween.stop();
                 this.glowTween = null;
             }
+        } catch (error) {
+            console.error('Error in removeGlowEffect:', error);
         }
     }
     
     /**
      * Add star effect for invulnerability
+     * FIX: Added active check
      */
     addStarEffect() {
-        // Start flashing colors
-        this.starColorIndex = 0;
-        this.starColors = [0xffff00, 0xff0000, 0x00ff00, 0x0000ff, 0xff00ff];
+        if (!this.active) return;
         
-        // Color cycling timer
-        this.starTimer = this.scene.time.addEvent({
-            delay: 100,
-            callback: () => {
-                this.starColorIndex = (this.starColorIndex + 1) % this.starColors.length;
-                this.setTint(this.starColors[this.starColorIndex]);
-            },
-            loop: true
-        });
+        try {
+            // Start flashing colors
+            this.starColorIndex = 0;
+            this.starColors = [0xffff00, 0xff0000, 0x00ff00, 0x0000ff, 0xff00ff];
+            
+            // Color cycling timer
+            this.starTimer = this.scene.time.addEvent({
+                delay: 100,
+                callback: this.cycleColor,
+                callbackScope: this,
+                loop: true
+            });
+            
+            // Add trail particles
+            this.trail = this.scene.add.particles('particle');
+            this.trailEmitter = this.trail.createEmitter({
+                x: this.x - this.width / 2,
+                y: this.y,
+                speed: { min: 10, max: 30 },
+                angle: { min: 150, max: 210 },
+                scale: { start: 0.4, end: 0 },
+                lifespan: 500,
+                frequency: 30,
+                tint: this.starColors
+            });
+        } catch (error) {
+            console.error('Error in addStarEffect:', error);
+        }
+    }
+    
+    /**
+     * Cycle colors for star power-up
+     * FIX: Added active check
+     */
+    cycleColor() {
+        if (!this.active) return;
         
-        // Add trail particles
-        this.trail = this.scene.add.particles('particle');
-        this.trailEmitter = this.trail.createEmitter({
-            x: this.x - this.width / 2,
-            y: this.y,
-            speed: { min: 10, max: 30 },
-            angle: { min: 150, max: 210 },
-            scale: { start: 0.4, end: 0 },
-            lifespan: 500,
-            frequency: 30,
-            tint: this.starColors
-        });
+        try {
+            const colors = [0xffff00, 0xff0000, 0x00ff00, 0x0000ff, 0xff00ff];
+            this.colorIndex = (this.colorIndex || 0) + 1;
+            if (this.colorIndex >= colors.length) this.colorIndex = 0;
+            
+            this.setTint(colors[this.colorIndex]);
+        } catch (error) {
+            console.error('Error in cycleColor:', error);
+        }
     }
     
     /**
      * Remove star effect when invulnerability expires
+     * FIX: Added null checks
      */
     removeStarEffect() {
-        // Stop flashing colors
-        if (this.starTimer) {
-            this.starTimer.remove();
-            this.starTimer = null;
-        }
-        
-        // Clear tint
-        this.clearTint();
-        
-        // Remove trail
-        if (this.trailEmitter) {
-            this.trailEmitter.stop();
-            this.scene.time.delayedCall(500, () => {
-                if (this.trail) {
-                    this.trail.destroy();
-                    this.trail = null;
-                    this.trailEmitter = null;
-                }
-            });
+        try {
+            // Stop flashing colors
+            if (this.starTimer) {
+                this.starTimer.remove();
+                this.starTimer = null;
+            }
+            
+            // Clear tint
+            if (this.active) {
+                this.clearTint();
+            }
+            
+            // Remove trail
+            if (this.trailEmitter) {
+                this.trailEmitter.stop();
+                
+                this.scene.time.delayedCall(500, () => {
+                    if (this.trail) {
+                        this.trail.destroy();
+                        this.trail = null;
+                        this.trailEmitter = null;
+                    }
+                });
+            }
+        } catch (error) {
+            console.error('Error in removeStarEffect:', error);
         }
     }
     
@@ -535,31 +723,39 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
      * Add death effect when bird dies
      */
     addDeathEffect() {
-        // Particle explosion
-        const particles = this.scene.add.particles('particle');
-        const emitter = particles.createEmitter({
-            x: this.x,
-            y: this.y,
-            speed: { min: 50, max: 200 },
-            angle: { min: 0, max: 360 },
-            scale: { start: 0.6, end: 0 },
-            lifespan: 800,
-            quantity: 30
-        });
-        
-        // Stop emitting after burst
-        this.scene.time.delayedCall(100, () => {
-            emitter.stop();
-            
-            // Clean up
-            this.scene.time.delayedCall(800, () => {
-                particles.destroy();
+        try {
+            // Particle explosion
+            const particles = this.scene.add.particles('particle');
+            const emitter = particles.createEmitter({
+                x: this.x,
+                y: this.y,
+                speed: { min: 50, max: 200 },
+                angle: { min: 0, max: 360 },
+                scale: { start: 0.6, end: 0 },
+                lifespan: 800,
+                quantity: 30
             });
-        });
+            
+            // Stop emitting after burst
+            this.scene.time.delayedCall(100, () => {
+                emitter.stop();
+                
+                // Clean up
+                this.scene.time.delayedCall(800, () => {
+                    particles.destroy();
+                });
+            });
+        } catch (error) {
+            console.error('Error in addDeathEffect:', error);
+        }
     }
     
+    /**
+     * Shoot a fireball
+     * FIX: Added active, null, and error checks
+     */
     shootFireball() {
-        if (!this.isShooting || this.isDead) return null;
+        if (!this.isShooting || this.isDead || !this.active) return null;
         
         try {
             // Implement cooldown to prevent too many fireballs
@@ -633,28 +829,57 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
     
     /**
      * Clean up bird resources
+     * FIX: More comprehensive cleanup
      */
     destroy() {
-        // Clean up timers
-        this.clearPowerUps();
-        
-        // Clean up effects
-        if (this.effects) this.effects.destroy();
-        if (this.trail) this.trail.destroy();
-        
-        // Clean up tweens
-        if (this.mushroomBlinkTween) this.mushroomBlinkTween.stop();
-        if (this.flowerBlinkTween) this.flowerBlinkTween.stop();
-        if (this.invulnerabilityBlinkTween) this.invulnerabilityBlinkTween.stop();
-        if (this.growTween) this.growTween.stop();
-        if (this.glowTween) this.glowTween.stop();
-        
-        // Clean up event listeners
-        this.scene.events.off('powerup_mushroom', this.activateMushroom, this);
-        this.scene.events.off('powerup_flower', this.activateFlower, this);
-        this.scene.events.off('powerup_star', this.activateInvulnerability, this);
-        
-        // Call parent destroy
-        super.destroy();
+        try {
+            // Clean up timers
+            this.clearPowerUps();
+            
+            // Clean up effects
+            if (this.effects) {
+                this.effects.destroy();
+                this.effects = null;
+            }
+            
+            if (this.trail) {
+                this.trail.destroy();
+                this.trail = null;
+            }
+            
+            if (this.glow) {
+                this.glow.destroy();
+                this.glow = null;
+            }
+            
+            // Clean up tweens
+            if (this.mushroomBlinkTween) this.mushroomBlinkTween.stop();
+            if (this.flowerBlinkTween) this.flowerBlinkTween.stop();
+            if (this.invulnerabilityBlinkTween) this.invulnerabilityBlinkTween.stop();
+            if (this.growTween) this.growTween.stop();
+            if (this.glowTween) this.glowTween.stop();
+            
+            // Clean up event listeners
+            this.scene.events.off('powerup_mushroom', this.activateMushroom, this);
+            this.scene.events.off('powerup_flower', this.activateFlower, this);
+            this.scene.events.off('powerup_star', this.activateInvulnerability, this);
+            
+            // Reset all states
+            this.isBig = false;
+            this.isShooting = false;
+            this.isInvulnerable = false;
+            this.isDead = true;
+            
+            // Call parent destroy
+            super.destroy();
+        } catch (error) {
+            console.error('Error in Bird.destroy:', error);
+            // Still try to call parent destroy
+            try {
+                super.destroy();
+            } catch (e) {
+                console.error('Error in super.destroy:', e);
+            }
+        }
     }
 }

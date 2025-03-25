@@ -1,6 +1,7 @@
 /**
  * PowerUp Class
  * Represents collectible power-ups that give the player special abilities
+ * FIXED: Added proper cleanup and error handling
  */
 class PowerUp extends Phaser.Physics.Arcade.Sprite {
     /**
@@ -29,221 +30,291 @@ class PowerUp extends Phaser.Physics.Arcade.Sprite {
         // Configure physics body
         this.body.allowGravity = false;
         
+        // Initialize tween reference
+        this.animationTween = null;
+        this.colorCycle = null;
+        this.colorIndex = 0;
+        
         // Apply effects based on power-up type
         this.applyTypeEffects();
     }
     
     /**
      * Apply visual and behavior effects based on power-up type
+     * FIX: Store tween references for cleanup
      */
     applyTypeEffects() {
-        switch (this.type) {
-            case 'mushroom':
-                // Mushroom - size increase power
-                // Pulsing effect
-                this.scene.tweens.add({
-                    targets: this,
-                    scale: { from: 0.9, to: 1.1 },
-                    duration: 600,
-                    yoyo: true,
-                    repeat: -1
-                });
-                break;
+        try {
+            switch (this.type) {
+                case 'mushroom':
+                    // Mushroom - size increase power
+                    // Pulsing effect
+                    this.animationTween = this.scene.tweens.add({
+                        targets: this,
+                        scale: { from: 0.9, to: 1.1 },
+                        duration: 600,
+                        yoyo: true,
+                        repeat: -1
+                    });
+                    break;
+                    
+                case 'flower':
+                    // Flower - shooting ability
+                    // Rotation effect
+                    this.animationTween = this.scene.tweens.add({
+                        targets: this,
+                        angle: { from: -5, to: 5 },
+                        duration: 500,
+                        yoyo: true,
+                        repeat: -1
+                    });
+                    break;
+                    
+                case 'star':
+                    // Star - invincibility
+                    // Rotation and pulsing
+                    this.animationTween = this.scene.tweens.add({
+                        targets: this,
+                        angle: { from: 0, to: 360 },
+                        scale: { from: 0.8, to: 1.2 },
+                        duration: 1500,
+                        repeat: -1
+                    });
+                    
+                    // Color cycling
+                    this.colorCycle = this.scene.time.addEvent({
+                        delay: 150,
+                        callback: this.cycleColor,
+                        callbackScope: this,
+                        loop: true
+                    });
+                    break;
+                    
+                case 'coin':
+                    // Coin - points
+                    // Rotation effect
+                    this.animationTween = this.scene.tweens.add({
+                        targets: this,
+                        angle: { from: 0, to: 360 },
+                        duration: 1000,
+                        repeat: -1
+                    });
+                    break;
                 
-            case 'flower':
-                // Flower - shooting ability
-                // Rotation effect
-                this.scene.tweens.add({
-                    targets: this,
-                    angle: { from: -5, to: 5 },
-                    duration: 500,
-                    yoyo: true,
-                    repeat: -1
-                });
-                break;
-                
-            case 'star':
-                // Star - invincibility
-                // Rotation and pulsing
-                this.scene.tweens.add({
-                    targets: this,
-                    angle: { from: 0, to: 360 },
-                    scale: { from: 0.8, to: 1.2 },
-                    duration: 1500,
-                    repeat: -1
-                });
-                
-                // Color cycling
-                this.colorCycle = this.scene.time.addEvent({
-                    delay: 150,
-                    callback: this.cycleColor,
-                    callbackScope: this,
-                    loop: true
-                });
-                break;
-                
-            case 'coin':
-                // Coin - points
-                // Rotation effect
-                this.scene.tweens.add({
-                    targets: this,
-                    angle: { from: 0, to: 360 },
-                    duration: 1000,
-                    repeat: -1
-                });
-                break;
-            
-            default:
-                // Default floating animation
-                this.scene.tweens.add({
-                    targets: this,
-                    y: this.y + 10,
-                    duration: 1000,
-                    yoyo: true,
-                    repeat: -1
-                });
-                break;
+                default:
+                    // Default floating animation
+                    this.animationTween = this.scene.tweens.add({
+                        targets: this,
+                        y: this.y + 10,
+                        duration: 1000,
+                        yoyo: true,
+                        repeat: -1
+                    });
+                    break;
+            }
+        } catch (error) {
+            console.error('Error in PowerUp.applyTypeEffects:', error);
         }
     }
     
     /**
      * Cycle colors for star power-up
+     * FIX: Added active check
      */
     cycleColor() {
-        const colors = [0xffff00, 0xff0000, 0x00ff00, 0x0000ff, 0xff00ff];
-        this.colorIndex = (this.colorIndex || 0) + 1;
-        if (this.colorIndex >= colors.length) this.colorIndex = 0;
+        if (!this.active) return;
         
-        this.setTint(colors[this.colorIndex]);
+        try {
+            const colors = [0xffff00, 0xff0000, 0x00ff00, 0x0000ff, 0xff00ff];
+            this.colorIndex = (this.colorIndex || 0) + 1;
+            if (this.colorIndex >= colors.length) this.colorIndex = 0;
+            
+            this.setTint(colors[this.colorIndex]);
+        } catch (error) {
+            console.error('Error in PowerUp.cycleColor:', error);
+        }
     }
     
     /**
      * Update power-up behavior
      * @param {number} time - Current time
-     * @param {number} delta - Time since last update
+     * @param {number} delta - The delta time in ms since the last frame
      * @param {number} speed - Game speed
+     * FIX: Added active check
      */
     update(time, delta, speed) {
-        // Move based on game speed (slower than obstacles)
-        const moveAmount = (speed - CONFIG.POWERUP_SPEED_OFFSET) * delta / 1000;
-        this.x -= moveAmount;
+        if (!this.active) return;
         
-        // Add floating effect
-        if (this.type !== 'star' && this.type !== 'coin') {
-            this.y += Math.sin(time / 300) * 0.5;
-        }
-        
-        // Remove if off screen
-        if (this.x < -this.width) {
-            this.destroy();
+        try {
+            // Move based on game speed (slower than obstacles)
+            const moveAmount = (speed - CONFIG.POWERUP_SPEED_OFFSET) * delta / 1000;
+            this.x -= moveAmount;
+            
+            // Add floating effect
+            if (this.type !== 'star' && this.type !== 'coin') {
+                this.y += Math.sin(time / 300) * 0.5;
+            }
+            
+            // Remove if off screen
+            if (this.x < -this.width) {
+                this.destroy();
+            }
+        } catch (error) {
+            console.error('Error in PowerUp.update:', error);
         }
     }
     
     /**
      * Collect the power-up
      * @returns {Object} Power-up effect info
+     * FIX: Added active check and error handling
      */
     collect() {
-        if (this.collected) return null;
+        if (this.collected || !this.active) return null;
         
-        // Mark as collected
-        this.collected = true;
-        
-        // Create collection effect
-        this.createCollectEffect();
-        
-        // Play collection sound
-        if (this.type === 'coin') {
-            this.scene.sound.play('sfx-coin', { volume: 0.7 });
-        } else {
-            this.scene.sound.play('sfx-powerup', { volume: 0.7 });
+        try {
+            // Mark as collected
+            this.collected = true;
+            
+            // Create collection effect
+            this.createCollectEffect();
+            
+            // Play collection sound
+            if (this.type === 'coin') {
+                this.scene.sound.play('sfx-coin', { volume: 0.7 });
+            } else {
+                this.scene.sound.play('sfx-powerup', { volume: 0.7 });
+            }
+            
+            // Return power-up effect info
+            const effectInfo = {
+                type: this.type,
+                value: this.value
+            };
+            
+            // Destroy power-up
+            this.destroy();
+            
+            return effectInfo;
+        } catch (error) {
+            console.error('Error in PowerUp.collect:', error);
+            
+            // Still try to destroy if there was an error
+            if (this.active) {
+                this.destroy();
+            }
+            
+            return {
+                type: this.type,
+                value: this.value
+            };
         }
-        
-        // Return power-up effect info
-        const effectInfo = {
-            type: this.type,
-            value: this.value
-        };
-        
-        // Destroy power-up
-        this.destroy();
-        
-        return effectInfo;
     }
     
     /**
      * Create collection effect
+     * FIX: Added error handling
      */
     createCollectEffect() {
-        // Create particles
-        const particles = this.scene.add.particles('particle');
-        
-        // Set particle color based on power-up type
-        let particleColor;
-        
-        switch (this.type) {
-            case 'mushroom':
-                particleColor = 0xff0000; // Red for mushroom
-                break;
-                
-            case 'flower':
-                particleColor = 0xff9900; // Orange for flower
-                break;
-                
-            case 'star':
-                particleColor = 0xffff00; // Yellow for star
-                break;
-                
-            case 'coin':
-                particleColor = 0xffdd00; // Gold for coin
-                break;
-                
-            default:
-                particleColor = 0xffffff; // White default
-                break;
-        }
-        
-        // Create particle emitter
-        const emitter = particles.createEmitter({
-            x: this.x,
-            y: this.y,
-            speed: { min: 30, max: 80 },
-            angle: { min: 0, max: 360 },
-            scale: { start: 0.4, end: 0 },
-            lifespan: 600,
-            quantity: 15,
-            tint: particleColor
-        });
-        
-        // Stop emitting after burst
-        this.scene.time.delayedCall(100, () => {
-            emitter.stop();
+        try {
+            // Create particles
+            const particles = this.scene.add.particles('particle');
             
-            // Clean up particles after they fade
-            this.scene.time.delayedCall(600, () => {
-                particles.destroy();
+            // Set particle color based on power-up type
+            let particleColor;
+            
+            switch (this.type) {
+                case 'mushroom':
+                    particleColor = 0xff0000; // Red for mushroom
+                    break;
+                    
+                case 'flower':
+                    particleColor = 0xff9900; // Orange for flower
+                    break;
+                    
+                case 'star':
+                    particleColor = 0xffff00; // Yellow for star
+                    break;
+                    
+                case 'coin':
+                    particleColor = 0xffdd00; // Gold for coin
+                    break;
+                    
+                default:
+                    particleColor = 0xffffff; // White default
+                    break;
+            }
+            
+            // Create particle emitter
+            const emitter = particles.createEmitter({
+                x: this.x,
+                y: this.y,
+                speed: { min: 30, max: 80 },
+                angle: { min: 0, max: 360 },
+                scale: { start: 0.4, end: 0 },
+                lifespan: 600,
+                quantity: 15,
+                tint: particleColor
             });
-        });
+            
+            // Stop emitting after burst
+            this.scene.time.delayedCall(100, () => {
+                if (emitter && emitter.active) {
+                    emitter.stop();
+                    
+                    // Clean up particles after they fade
+                    this.scene.time.delayedCall(600, () => {
+                        if (particles && particles.active) {
+                            particles.destroy();
+                        }
+                    });
+                }
+            });
+        } catch (error) {
+            console.error('Error in PowerUp.createCollectEffect:', error);
+        }
     }
     
     /**
      * Clean up resources
+     * FIX: Comprehensive cleanup of all resources
      */
     destroy() {
-        // Clean up color cycle timer if it exists
-        if (this.colorCycle) {
-            this.colorCycle.remove();
-            this.colorCycle = null;
+        try {
+            // Clean up color cycle timer if it exists
+            if (this.colorCycle) {
+                this.colorCycle.remove();
+                this.colorCycle = null;
+            }
+            
+            // Clean up animation tween if it exists
+            if (this.animationTween) {
+                this.animationTween.stop();
+                this.animationTween = null;
+            }
+            
+            // Reset state
+            this.collected = true;
+            
+            // Call parent destroy
+            super.destroy();
+        } catch (error) {
+            console.error('Error in PowerUp.destroy:', error);
+            
+            // Still try to call parent destroy even if there was an error
+            try {
+                super.destroy();
+            } catch (e) {
+                console.error('Error in PowerUp.super.destroy:', e);
+            }
         }
-        
-        // Call parent destroy
-        super.destroy();
     }
 }
 
 /**
  * PowerUpManager Class
  * Manages power-up generation and types
+ * FIXED: Added error handling and proper event handling
  */
 class PowerUpManager {
     /**
@@ -284,32 +355,42 @@ class PowerUpManager {
         ];
         
         // Listen for spawn requests from obstacle patterns
-        this.scene.events.on('spawn_powerup', this.spawnAtPosition, this);
+        this.spawnListener = this.scene.events.on('spawn_powerup', this.spawnAtPosition, this);
     }
     
     /**
      * Generate random power-up based on current level
      * @param {number} level - Current game level
+     * FIX: Added error handling
      */
     generate(level) {
-        // Don't spawn too many power-ups
-        if (this.powerUps.getLength() >= 3) return;
-        
-        // Random position
-        const x = CONFIG.GAME_WIDTH;
-        const y = Phaser.Math.Between(100, CONFIG.GAME_HEIGHT - 100);
-        
-        // Select power-up type based on level and rarity
-        this.spawnPowerUp(x, y, level);
+        try {
+            // Don't spawn too many power-ups
+            if (this.powerUps.getLength() >= 3) return;
+            
+            // Random position
+            const x = CONFIG.GAME_WIDTH;
+            const y = Phaser.Math.Between(100, CONFIG.GAME_HEIGHT - 100);
+            
+            // Select power-up type based on level and rarity
+            this.spawnPowerUp(x, y, level);
+        } catch (error) {
+            console.error('Error in PowerUpManager.generate:', error);
+        }
     }
     
     /**
      * Spawn a power-up at a specific position (used by obstacle patterns)
      * @param {Object} position - Position object with x and y coordinates
+     * FIX: Added error handling
      */
     spawnAtPosition(position) {
-        const level = this.scene.level || 1;
-        this.spawnPowerUp(position.x, position.y, level);
+        try {
+            const level = this.scene.level || 1;
+            this.spawnPowerUp(position.x, position.y, level);
+        } catch (error) {
+            console.error('Error in PowerUpManager.spawnAtPosition:', error);
+        }
     }
     
     /**
@@ -317,52 +398,65 @@ class PowerUpManager {
      * @param {number} x - X position
      * @param {number} y - Y position
      * @param {number} level - Current game level
+     * FIX: Added comprehensive error handling
      */
     spawnPowerUp(x, y, level) {
-        // Get available power-ups for current level
-        const availableTypes = this.powerUpTypes.filter(p => p.minLevel <= level);
-        
-        // Weighted selection based on rarity
-        let totalWeight = 0;
-        
-        // Calculate total weight
-        availableTypes.forEach(powerUp => {
-            totalWeight += powerUp.rarity;
-        });
-        
-        // Random value
-        let random = Phaser.Math.RND.frac() * totalWeight;
-        let selectedType = null;
-        
-        // Select based on weight
-        for (const powerUp of availableTypes) {
-            random -= powerUp.rarity;
-            if (random <= 0) {
-                selectedType = powerUp;
-                break;
-            }
-        }
-        
-        // Fallback if no power-up selected
-        if (!selectedType && availableTypes.length > 0) {
-            selectedType = availableTypes[0];
-        }
-        
-        // Create power-up if type was selected
-        if (selectedType) {
-            const powerUp = new PowerUp(
-                this.scene,
-                x,
-                y,
-                selectedType.texture,
-                {
-                    type: selectedType.type,
-                    value: this.getPowerUpValue(selectedType.type, level)
-                }
-            );
+        try {
+            // Get available power-ups for current level
+            const availableTypes = this.powerUpTypes.filter(p => p.minLevel <= level);
             
-            // Add to group
-            this.powerUps.add(powerUp);
+            if (availableTypes.length === 0) return;
+            
+            // Weighted selection based on rarity
+            let totalWeight = 0;
+            
+            // Calculate total weight
+            availableTypes.forEach(powerUp => {
+                totalWeight += powerUp.rarity;
+            });
+            
+            // Random value
+            let random = Phaser.Math.RND.frac() * totalWeight;
+            let selectedType = null;
+            
+            // Select based on weight
+            for (const powerUp of availableTypes) {
+                random -= powerUp.rarity;
+                if (random <= 0) {
+                    selectedType = powerUp;
+                    break;
+                }
+            }
+            
+            // Fallback if no power-up selected
+            if (!selectedType && availableTypes.length > 0) {
+                selectedType = availableTypes[0];
+            }
+            
+            // Create power-up if type was selected
+            if (selectedType) {
+                // Make sure x and y are valid numbers
+                if (isNaN(x) || isNaN(y)) {
+                    console.error('Invalid position for power-up:', x, y);
+                    return;
+                }
+                
+                const powerUp = new PowerUp(
+                    this.scene,
+                    x,
+                    y,
+                    selectedType.texture,
+                    {
+                        type: selectedType.type,
+                        value: this.getPowerUpValue(selectedType.type, level)
+                    }
+                );
+                
+                // Add to group
+                this.powerUps.add(powerUp);
+            }
+        } catch (error) {
+            console.error('Error in PowerUpManager.spawnPowerUp:', error, 'Position:', x, y);
         }
     }
     
@@ -397,9 +491,26 @@ class PowerUpManager {
     
     /**
      * Clean up resources
+     * FIX: Comprehensive cleanup
      */
     destroy() {
-        // Remove event listeners
-        this.scene.events.off('spawn_powerup', this.spawnAtPosition, this);
+        try {
+            // Remove event listeners
+            this.scene.events.off('spawn_powerup', this.spawnAtPosition, this);
+            
+            // Clear reference to event listener
+            this.spawnListener = null;
+            
+            // Clear any pending power-ups if they exist
+            if (this.powerUps) {
+                this.powerUps.clear(true, true);
+            }
+            
+            // Clear references
+            this.scene = null;
+            this.powerUps = null;
+        } catch (error) {
+            console.error('Error in PowerUpManager.destroy:', error);
+        }
     }
 }

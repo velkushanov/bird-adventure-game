@@ -1,11 +1,12 @@
 /**
- * Obstacle Class
- * Represents obstacles that the player must avoid
+ * Enemy Class
+ * Represents enemies like turtles that the player must avoid or defeat
+ * FIXED: Added proper cleanup and error handling
  */
-class Obstacle extends Phaser.Physics.Arcade.Sprite {
+class Enemy extends Phaser.Physics.Arcade.Sprite {
     /**
-     * Create a new obstacle
-     * @param {Phaser.Scene} scene - The scene the obstacle belongs to
+     * Create a new enemy
+     * @param {Phaser.Scene} scene - The scene the enemy belongs to
      * @param {number} x - Initial x position
      * @param {number} y - Initial y position
      * @param {string} texture - The texture key to use
@@ -22,506 +23,619 @@ class Obstacle extends Phaser.Physics.Arcade.Sprite {
         this.scene = scene;
         
         // Set properties from config
-        this.type = config.type || 'pipe';
-        this.strength = config.strength || 1;
-        this.scored = false;
+        this.type = config.type || 'turtle';
+        this.movementPattern = config.movementPattern || 'sine';
+        this.health = config.health || 1;
+        this.speed = config.speed || 1;
+        
+        // Store original position for movement patterns
+        this.startX = x;
+        this.startY = y;
+        this.moveTime = 0;
+        this.ySpeed = 0;
+        this.destroyed = false;
         
         // Configure physics body
         this.body.allowGravity = false;
-        this.setImmovable(true);
         
-        // Setup based on obstacle type
-        this.setupObstacleType();
+        // Create animations
+        this.createAnimations();
+        
+        // Start animation
+        this.playAnimation();
     }
     
     /**
-     * Setup obstacle based on its type
+     * Create animations for the enemy
+     * FIX: Added error handling
      */
-    setupObstacleType() {
-        switch (this.type) {
-            case 'pipe':
-                // Standard pipe - no special properties
-                break;
+    createAnimations() {
+        try {
+            const textureKey = this.texture.key;
+            
+            // Only create animations if they don't exist yet
+            if (!this.scene.anims.exists(`${textureKey}_walk`)) {
+                // Walking animation
+                this.scene.anims.create({
+                    key: `${textureKey}_walk`,
+                    frames: this.scene.anims.generateFrameNumbers(textureKey, { start: 0, end: 1 }),
+                    frameRate: 5,
+                    repeat: -1
+                });
                 
-            case 'brick':
-                // Brick block - breakable by big bird
-                this.strength = 1;
-                break;
-                
-            case 'rock':
-                // Rock - tougher, requires 2 hits when big
-                this.strength = 2;
-                break;
-                
-            case 'spikes':
-                // Spikes - deadly even when big
-                this.strength = 99; // Essentially unbreakable
-                break;
-                
-            default:
-                // Default to standard pipe
-                this.type = 'pipe';
-                break;
+                // Hit animation (single frame for stunned effect)
+                this.scene.anims.create({
+                    key: `${textureKey}_hit`,
+                    frames: [ { key: textureKey, frame: 1 } ],
+                    frameRate: 5
+                });
+            }
+        } catch (error) {
+            console.error("Error in Enemy.createAnimations:", error);
         }
     }
     
     /**
-     * Take damage
-     * @param {number} amount - Amount of damage to take
-     * @returns {boolean} True if obstacle was destroyed
+     * Play the appropriate animation
+     * FIX: Added error handling
      */
-    takeDamage(amount = 1) {
-        this.strength -= amount;
-        
-        if (this.strength <= 0) {
-            // Create destruction effect
-            this.createDestructionEffect();
+    playAnimation() {
+        try {
+            const textureKey = this.texture.key;
             
-            // Play destroy sound based on type
-            switch (this.type) {
-                case 'brick':
-                    this.scene.sound.play('sfx-break', { volume: 0.7 });
+            // Play walk animation
+            this.play(`${textureKey}_walk`);
+        } catch (error) {
+            console.error("Error in Enemy.playAnimation:", error);
+        }
+    }
+    
+    /**
+     * Update enemy behavior
+     * @param {number} time - Current time
+     * @param {number} delta - Time since last update
+     * @param {number} speed - Game speed
+     * FIX: Added active check and error handling
+     */
+    update(time, delta, speed) {
+        if (!this.active || this.destroyed) return;
+        
+        try {
+            // Move based on game speed
+            const moveAmount = (speed - CONFIG.ENEMY_SPEED_OFFSET) * delta / 1000;
+            this.x -= moveAmount;
+            
+            // Update move time counter
+            this.moveTime += delta;
+            
+            // Apply movement pattern
+            this.applyMovementPattern(delta);
+            
+            // Remove if off screen
+            if (this.x < -this.width) {
+                this.destroy();
+            }
+        } catch (error) {
+            console.error("Error in Enemy.update:", error);
+        }
+    }
+    
+    /**
+     * Apply movement pattern
+     * @param {number} delta - Time since last update
+     * FIX: Added error handling and active checks
+     */
+    applyMovementPattern(delta) {
+        if (!this.active) return;
+        
+        try {
+            switch (this.movementPattern) {
+                case 'sine':
+                    // Sine wave movement
+                    this.y = this.startY + Math.sin(this.moveTime / 500) * 50;
                     break;
                     
-                case 'rock':
-                    this.scene.sound.play('sfx-break', { volume: 0.8 });
+                case 'chase':
+                    // Get player reference (if available)
+                    const player = this.scene.bird;
+                    
+                    if (player && player.active && !player.isDead) {
+                        // Simple chase logic
+                        const dy = player.y - this.y;
+                        const chaseSpeed = 1.5;
+                        
+                        if (dy > 10) {
+                            this.y += chaseSpeed;
+                        } else if (dy < -10) {
+                            this.y -= chaseSpeed;
+                        }
+                        
+                        // Keep within screen bounds
+                        this.y = Phaser.Math.Clamp(this.y, 30, CONFIG.GAME_HEIGHT - 30);
+                    }
+                    break;
+                    
+                case 'bounce':
+                    // Bounce between top and bottom
+                    const bounceHeight = CONFIG.GAME_HEIGHT - 100;
+                    const bounceSpeed = 2;
+                    
+                    // Initialize ySpeed if not set
+                    if (this.ySpeed === undefined || this.ySpeed === 0) {
+                        this.ySpeed = bounceSpeed;
+                    }
+                    
+                    this.y += this.ySpeed;
+                    
+                    // Bounce off top and bottom
+                    if (this.y < 50) {
+                        this.y = 50;
+                        this.ySpeed = Math.abs(this.ySpeed);
+                    } else if (this.y > bounceHeight) {
+                        this.y = bounceHeight;
+                        this.ySpeed = -Math.abs(this.ySpeed);
+                    }
+                    break;
+                    
+                case 'hover':
+                    // Hover in place, only moving horizontally
                     break;
                     
                 default:
-                    this.scene.sound.play('sfx-hit', { volume: 0.6 });
+                    // Default to sine movement if pattern not recognized
+                    this.y = this.startY + Math.sin(this.moveTime / 500) * 30;
                     break;
             }
+        } catch (error) {
+            console.error("Error in Enemy.applyMovementPattern:", error);
+        }
+    }
+    
+    /**
+     * Take damage from player or projectiles
+     * @param {number} amount - Amount of damage to take
+     * @returns {boolean} True if enemy was defeated
+     * FIX: Added error handling and active checks
+     */
+    takeDamage(amount = 1) {
+        if (!this.active || this.destroyed) return false;
+        
+        try {
+            this.health -= amount;
             
-            // Destroy the obstacle
-            this.destroy();
-            return true;
-        } else {
-            // Obstacle took damage but survived
-            this.createHitEffect();
+            if (this.health <= 0) {
+                // Enemy defeated
+                this.createDeathEffect();
+                
+                // Play defeat sound
+                if (this.type === 'turtle') {
+                    this.scene.sound.play('sfx-stomp', { volume: 0.7 });
+                } else {
+                    this.scene.sound.play('sfx-hit', { volume: 0.7 });
+                }
+                
+                // Mark as destroyed to prevent multiple hits
+                this.destroyed = true;
+                
+                // Destroy the enemy
+                this.destroy();
+                return true;
+            } else {
+                // Enemy took damage but survived
+                this.createHitEffect();
+                
+                // Play hit animation
+                this.play(`${this.texture.key}_hit`);
+                
+                // Restore normal animation after a delay
+                this.scene.time.delayedCall(300, () => {
+                    if (this.active && !this.destroyed) {
+                        this.playAnimation();
+                    }
+                });
+                
+                // Play hit sound
+                this.scene.sound.play('sfx-hit', { volume: 0.5 });
+                
+                return false;
+            }
+        } catch (error) {
+            console.error("Error in Enemy.takeDamage:", error);
             
-            // Play hit sound
-            this.scene.sound.play('sfx-hit-obstacle', { volume: 0.5 });
+            // Still try to destroy if there was a fatal error
+            if (amount >= this.health) {
+                this.destroyed = true;
+                this.destroy();
+                return true;
+            }
             
             return false;
         }
     }
     
     /**
-     * Create destruction effect
+     * Create death effect when enemy is defeated
+     * FIX: Added error handling
      */
-    createDestructionEffect() {
-        // Create particles
-        const particles = this.scene.add.particles('particle');
-        
-        // Set particle color based on obstacle type
-        let particleColor = 0xFFFFFF;
-        
-        switch (this.type) {
-            case 'brick':
-                particleColor = 0xC25B17; // Brown
-                break;
-                
-            case 'rock':
-                particleColor = 0x888888; // Gray
-                break;
-                
-            case 'pipe':
-                particleColor = 0x22AA22; // Green
-                break;
-                
-            case 'spikes':
-                particleColor = 0xCCCCCC; // Silver
-                break;
-        }
-        
-        // Create particle emitter
-        const emitter = particles.createEmitter({
-            x: this.x,
-            y: this.y,
-            speed: { min: 50, max: 200 },
-            angle: { min: 0, max: 360 },
-            scale: { start: 0.6, end: 0 },
-            lifespan: 800,
-            quantity: 20,
-            tint: particleColor
-        });
-        
-        // Stop emitting after burst
-        this.scene.time.delayedCall(100, () => {
-            emitter.stop();
+    createDeathEffect() {
+        try {
+            // Create particles
+            const particles = this.scene.add.particles('particle');
             
-            // Clean up particles after they fade
-            this.scene.time.delayedCall(800, () => {
-                particles.destroy();
+            // Set particle color based on enemy type
+            let particleColor;
+            
+            switch (this.type) {
+                case 'turtle':
+                    particleColor = 0x22AA22; // Green for turtles
+                    break;
+                    
+                case 'goomba':
+                    particleColor = 0xA52A2A; // Brown for goombas
+                    break;
+                    
+                default:
+                    particleColor = 0xFFFFFF; // White for others
+                    break;
+            }
+            
+            // Create particle emitter
+            const emitter = particles.createEmitter({
+                x: this.x,
+                y: this.y,
+                speed: { min: 50, max: 200 },
+                angle: { min: 0, max: 360 },
+                scale: { start: 0.6, end: 0 },
+                lifespan: 800,
+                quantity: 20,
+                tint: particleColor
             });
-        });
+            
+            // Stop emitting after burst
+            this.scene.time.delayedCall(100, () => {
+                if (emitter && emitter.active) {
+                    emitter.stop();
+                    
+                    // Clean up particles after they fade
+                    this.scene.time.delayedCall(800, () => {
+                        if (particles && particles.active) {
+                            particles.destroy();
+                        }
+                    });
+                }
+            });
+        } catch (error) {
+            console.error("Error in Enemy.createDeathEffect:", error);
+        }
     }
     
     /**
-     * Create hit effect when obstacle is hit but not destroyed
+     * Create hit effect when enemy is damaged but not defeated
+     * FIX: Added active check and error handling
      */
     createHitEffect() {
-        // Flash the obstacle
-        this.scene.tweens.add({
-            targets: this,
-            alpha: 0.5,
-            duration: 50,
-            yoyo: true,
-            repeat: 2,
-            ease: 'Linear'
-        });
+        if (!this.active) return;
         
-        // Small shake effect
-        this.scene.tweens.add({
-            targets: this,
-            x: this.x + 5,
-            duration: 50,
-            yoyo: true,
-            repeat: 2,
-            ease: 'Sine.easeInOut'
-        });
+        try {
+            // Flash the enemy
+            this.scene.tweens.add({
+                targets: this,
+                alpha: 0.5,
+                duration: 50,
+                yoyo: true,
+                repeat: 2,
+                ease: 'Linear'
+            });
+            
+            // Small knock-back effect
+            this.scene.tweens.add({
+                targets: this,
+                x: this.x + 15,
+                duration: 100,
+                ease: 'Sine.easeOut',
+                yoyo: true
+            });
+        } catch (error) {
+            console.error("Error in Enemy.createHitEffect:", error);
+        }
     }
     
     /**
-     * Update obstacle
-     * @param {number} time - Current time
-     * @param {number} delta - Time since last update
-     * @param {number} speed - Game speed
+     * Override destroy to ensure proper cleanup
+     * FIX: Added comprehensive cleanup
      */
-    update(time, delta, speed) {
-        // Move obstacle based on game speed
-        this.x -= speed * delta / 1000;
-        
-        // Remove if offscreen
-        if (this.x < -this.width) {
-            this.destroy();
+    destroy() {
+        try {
+            // Mark as destroyed
+            this.destroyed = true;
+            
+            // Call parent destroy
+            super.destroy();
+        } catch (error) {
+            console.error("Error in Enemy.destroy:", error);
+            
+            // Try to still destroy the sprite even if there was an error
+            try {
+                super.destroy();
+            } catch (e) {
+                console.error("Error in Enemy.super.destroy:", e);
+            }
         }
     }
 }
 
 /**
- * ObstacleManager Class
- * Manages obstacle generation and patterns
+ * EnemyManager Class
+ * Manages enemy generation and patterns
+ * FIXED: Added proper cleanup and error handling
  */
-class ObstacleManager {
+class EnemyManager {
     /**
-     * Create a new obstacle manager
+     * Create a new enemy manager
      * @param {Phaser.Scene} scene - The scene this manager belongs to
-     * @param {Phaser.Physics.Arcade.Group} obstacleGroup - Group for obstacles
+     * @param {Phaser.Physics.Arcade.Group} enemyGroup - Group for enemies
      */
-    constructor(scene, obstacleGroup) {
+    constructor(scene, enemyGroup) {
         this.scene = scene;
-        this.obstacles = obstacleGroup;
+        this.enemies = enemyGroup;
         
-        // Pattern definitions
-        this.patterns = [
-            this.generateBasicPipes,      // Standard pipe pair
-            this.generateStaggeredPipes,  // Staggered pipes
-            this.generateWavyPipes,       // Wavy pattern
-            this.generateNarrowGap,       // Extra narrow gap
-            this.generateBlockade         // Blockade with small gaps
+        // Enemy types
+        this.enemyTypes = [
+            {
+                type: 'turtle',
+                texture: 'turtle',
+                movementPatterns: ['sine', 'chase', 'bounce'],
+                minLevel: 1
+            },
+            {
+                type: 'goomba',
+                texture: 'goomba',
+                movementPatterns: ['hover', 'bounce'],
+                minLevel: 2
+            }
         ];
         
-        // Obstacle types by level
-        this.levelObstacleTypes = [
-            ['pipe'],                                  // Level 1
-            ['pipe', 'brick'],                         // Level 2
-            ['pipe', 'brick', 'rock'],                 // Level 3
-            ['pipe', 'brick', 'rock', 'spikes'],       // Level 4+
+        // Formation patterns
+        this.formations = [
+            this.spawnSingle,      // Single enemy
+            this.spawnPair,        // Pair of enemies
+            this.spawnTriangle,    // Triangle formation
+            this.spawnLine,        // Line of enemies
+            this.spawnWave         // Wave of enemies
         ];
     }
     
     /**
-     * Generate obstacles based on current level
+     * Generate enemies based on current level
      * @param {number} level - Current game level
+     * FIX: Added error handling
      */
     generate(level) {
-        // Determine pattern based on level
-        const patternIndex = Math.min(level - 1, this.patterns.length - 1);
-        const extraPatterns = Math.floor((level - 1) / this.patterns.length);
-        
-        // Choose random pattern with weighting toward level-appropriate patterns
-        let selectedPattern;
-        
-        if (Phaser.Math.RND.frac() < 0.7) {
-            // 70% chance for level-appropriate pattern
-            selectedPattern = Phaser.Math.RND.integerInRange(0, patternIndex);
-        } else {
-            // 30% chance for any pattern
-            selectedPattern = Phaser.Math.RND.integerInRange(0, this.patterns.length - 1);
+        try {
+            // Filter enemy types available at current level
+            const availableTypes = this.enemyTypes.filter(e => e.minLevel <= level);
+            
+            if (availableTypes.length === 0) return;
+            
+            // Choose formation based on level
+            const formationIndex = Math.min(level - 1, this.formations.length - 1);
+            const extraFormations = Math.floor((level - 1) / this.formations.length);
+            
+            // Choose random formation with weighting toward level-appropriate ones
+            let selectedFormation;
+            
+            if (Phaser.Math.RND.frac() < 0.7) {
+                // 70% chance for level-appropriate formation
+                selectedFormation = Phaser.Math.RND.integerInRange(0, formationIndex);
+            } else {
+                // 30% chance for any formation
+                selectedFormation = Phaser.Math.RND.integerInRange(0, this.formations.length - 1);
+            }
+            
+            // Generate the enemies
+            const formation = this.formations[selectedFormation];
+            formation.call(this, level, availableTypes);
+        } catch (error) {
+            console.error("Error in EnemyManager.generate:", error);
         }
-        
-        // Get available obstacle types for this level
-        const levelIndex = Math.min(level - 1, this.levelObstacleTypes.length - 1);
-        const availableTypes = this.levelObstacleTypes[levelIndex];
-        
-        // Generate the obstacles
-        const pattern = this.patterns[selectedPattern];
-        pattern.call(this, level, availableTypes);
     }
     
     /**
-     * Generate basic pipe pair with gap
+     * Create a single enemy
+     * @param {number} x - X position
+     * @param {number} y - Y position
+     * @param {Object} typeInfo - Enemy type information
      * @param {number} level - Current game level
-     * @param {Array} types - Available obstacle types
+     * @returns {Enemy} The created enemy
+     * FIX: Added error handling
      */
-    generateBasicPipes(level, types) {
-        // Calculate gap size based on level (gets smaller as level increases)
-        const maxReduction = CONFIG.OBSTACLE_GAP_DECREMENT * CONFIG.MAX_LEVEL;
-        const levelReduction = Math.min(CONFIG.OBSTACLE_GAP_DECREMENT * (level - 1), maxReduction);
-        const gapSize = CONFIG.MIN_OBSTACLE_GAP - levelReduction;
-        
-        // Random position for the gap
-        const gapPosition = Phaser.Math.Between(100, CONFIG.GAME_HEIGHT - 100 - gapSize);
-        
-        // Choose obstacle type (prefer pipes for basic pattern)
-        const obstacleType = (Phaser.Math.RND.frac() < 0.7) ? 'pipe' : Phaser.Math.RND.pick(types);
-        
-        // Create top obstacle
-        const topObstacle = new Obstacle(
-            this.scene,
-            CONFIG.GAME_WIDTH,
-            gapPosition - 320,
-            obstacleType,
-            { type: obstacleType }
-        );
-        
-        // Create bottom obstacle
-        const bottomObstacle = new Obstacle(
-            this.scene,
-            CONFIG.GAME_WIDTH,
-            gapPosition + gapSize,
-            obstacleType,
-            { type: obstacleType }
-        );
-        
-        // Flip bottom obstacle
-        bottomObstacle.flipY = true;
-        
-        // Add to group
-        this.obstacles.add(topObstacle);
-        this.obstacles.add(bottomObstacle);
-    }
-    
-    /**
-     * Generate staggered pipes pattern
-     * @param {number} level - Current game level
-     * @param {Array} types - Available obstacle types
-     */
-    generateStaggeredPipes(level, types) {
-        // Calculate gap size
-        const maxReduction = CONFIG.OBSTACLE_GAP_DECREMENT * CONFIG.MAX_LEVEL;
-        const levelReduction = Math.min(CONFIG.OBSTACLE_GAP_DECREMENT * (level - 1), maxReduction);
-        const gapSize = CONFIG.MIN_OBSTACLE_GAP - levelReduction;
-        
-        // Calculate positions for staggered pattern
-        const positions = [
-            Phaser.Math.Between(100, CONFIG.GAME_HEIGHT / 3),
-            Phaser.Math.Between(CONFIG.GAME_HEIGHT * 2/3, CONFIG.GAME_HEIGHT - 100)
-        ];
-        
-        // Random obstacle types
-        const types1 = Phaser.Math.RND.pick(types);
-        const types2 = Phaser.Math.RND.pick(types);
-        
-        // First pair
-        const topObstacle1 = new Obstacle(
-            this.scene,
-            CONFIG.GAME_WIDTH,
-            positions[0] - 320,
-            types1,
-            { type: types1 }
-        );
-        
-        const bottomObstacle1 = new Obstacle(
-            this.scene,
-            CONFIG.GAME_WIDTH,
-            positions[0] + gapSize,
-            types1,
-            { type: types1 }
-        );
-        bottomObstacle1.flipY = true;
-        
-        // Second pair (staggered)
-        const topObstacle2 = new Obstacle(
-            this.scene,
-            CONFIG.GAME_WIDTH + 300,
-            positions[1] - 320,
-            types2,
-            { type: types2 }
-        );
-        
-        const bottomObstacle2 = new Obstacle(
-            this.scene,
-            CONFIG.GAME_WIDTH + 300,
-            positions[1] + gapSize,
-            types2,
-            { type: types2 }
-        );
-        bottomObstacle2.flipY = true;
-        
-        // Add to group
-        this.obstacles.add(topObstacle1);
-        this.obstacles.add(bottomObstacle1);
-        this.obstacles.add(topObstacle2);
-        this.obstacles.add(bottomObstacle2);
-    }
-    
-    /**
-     * Generate wavy pattern of pipes
-     * @param {number} level - Current game level
-     * @param {Array} types - Available obstacle types
-     */
-    generateWavyPipes(level, types) {
-        // Calculate gap size
-        const maxReduction = CONFIG.OBSTACLE_GAP_DECREMENT * CONFIG.MAX_LEVEL;
-        const levelReduction = Math.min(CONFIG.OBSTACLE_GAP_DECREMENT * (level - 1), maxReduction);
-        const gapSize = CONFIG.MIN_OBSTACLE_GAP - levelReduction;
-        
-        // Number of pipe pairs
-        const pairCount = 3;
-        
-        // Generate wave parameters
-        const waveHeight = CONFIG.GAME_HEIGHT / 3;
-        const waveCenter = CONFIG.GAME_HEIGHT / 2;
-        
-        // Obstacle type
-        const obstacleType = Phaser.Math.RND.pick(types);
-        
-        // Create pipe pairs along a sine wave
-        for (let i = 0; i < pairCount; i++) {
-            // Position along wave
-            const xOffset = i * 250;
-            const yOffset = Math.sin(i * Math.PI / 2) * waveHeight;
-            const gapPosition = waveCenter + yOffset;
+    createEnemy(x, y, typeInfo, level) {
+        try {
+            // Validate inputs
+            if (isNaN(x) || isNaN(y) || !typeInfo || !this.scene || !this.enemies) {
+                console.error("Invalid parameters for createEnemy:", x, y, typeInfo, level);
+                return null;
+            }
             
-            // Create top obstacle
-            const topObstacle = new Obstacle(
-                this.scene,
-                CONFIG.GAME_WIDTH + xOffset,
-                gapPosition - 320,
-                obstacleType,
-                { type: obstacleType }
-            );
+            // Choose random movement pattern
+            const pattern = Phaser.Math.RND.pick(typeInfo.movementPatterns);
             
-            // Create bottom obstacle
-            const bottomObstacle = new Obstacle(
+            // Create enemy with scaled health based on level
+            const healthBonus = Math.floor((level - 1) / 3);
+            
+            const enemy = new Enemy(
                 this.scene,
-                CONFIG.GAME_WIDTH + xOffset,
-                gapPosition + gapSize,
-                obstacleType,
-                { type: obstacleType }
+                x,
+                y,
+                typeInfo.texture,
+                {
+                    type: typeInfo.type,
+                    movementPattern: pattern,
+                    health: 1 + healthBonus,
+                    speed: 1 + (level * 0.1)
+                }
             );
-            bottomObstacle.flipY = true;
             
             // Add to group
-            this.obstacles.add(topObstacle);
-            this.obstacles.add(bottomObstacle);
+            this.enemies.add(enemy);
+            
+            return enemy;
+        } catch (error) {
+            console.error("Error in EnemyManager.createEnemy:", error);
+            return null;
         }
     }
     
     /**
-     * Generate pattern with extra narrow gap
+     * Spawn a single enemy
      * @param {number} level - Current game level
-     * @param {Array} types - Available obstacle types
+     * @param {Array} availableTypes - Available enemy types
+     * FIX: Added error handling
      */
-    generateNarrowGap(level, types) {
-        // Calculate extra narrow gap
-        const maxReduction = CONFIG.OBSTACLE_GAP_DECREMENT * CONFIG.MAX_LEVEL;
-        const levelReduction = Math.min(CONFIG.OBSTACLE_GAP_DECREMENT * (level - 1), maxReduction);
-        const normalGapSize = CONFIG.MIN_OBSTACLE_GAP - levelReduction;
-        const narrowGapSize = normalGapSize * 0.7; // 30% narrower
-        
-        // Position for the gap
-        const gapPosition = Phaser.Math.Between(150, CONFIG.GAME_HEIGHT - 150 - narrowGapSize);
-        
-        // Choose obstacle type that's not spikes for fairness
-        const safeTypes = types.filter(type => type !== 'spikes');
-        const obstacleType = Phaser.Math.RND.pick(safeTypes.length > 0 ? safeTypes : ['pipe']);
-        
-        // Create top obstacle
-        const topObstacle = new Obstacle(
-            this.scene,
-            CONFIG.GAME_WIDTH,
-            gapPosition - 320,
-            obstacleType,
-            { type: obstacleType }
-        );
-        
-        // Create bottom obstacle
-        const bottomObstacle = new Obstacle(
-            this.scene,
-            CONFIG.GAME_WIDTH,
-            gapPosition + narrowGapSize,
-            obstacleType,
-            { type: obstacleType }
-        );
-        bottomObstacle.flipY = true;
-        
-        // Add to group
-        this.obstacles.add(topObstacle);
-        this.obstacles.add(bottomObstacle);
-        
-        // Add a power-up in the middle of the gap to reward the risk
-        if (Phaser.Math.RND.frac() < 0.7) { // 70% chance
-            this.scene.events.emit('spawn_powerup', {
-                x: CONFIG.GAME_WIDTH + 50, 
-                y: gapPosition + (narrowGapSize / 2)
-            });
+    spawnSingle(level, availableTypes) {
+        try {
+            // Choose random enemy type
+            const typeInfo = Phaser.Math.RND.pick(availableTypes);
+            
+            // Random vertical position
+            const y = Phaser.Math.Between(100, CONFIG.GAME_HEIGHT - 100);
+            
+            // Create enemy
+            this.createEnemy(CONFIG.GAME_WIDTH, y, typeInfo, level);
+        } catch (error) {
+            console.error("Error in EnemyManager.spawnSingle:", error);
         }
     }
     
     /**
-     * Generate blockade pattern with small gaps
+     * Spawn a pair of enemies
      * @param {number} level - Current game level
-     * @param {Array} types - Available obstacle types
+     * @param {Array} availableTypes - Available enemy types
+     * FIX: Added error handling
      */
-    generateBlockade(level, types) {
-        // Divide screen into sections
-        const sections = 5;
-        const sectionHeight = CONFIG.GAME_HEIGHT / sections;
-        
-        // Number of gaps to leave open (based on level)
-        const openings = Math.max(2, 4 - Math.floor(level / 3));
-        
-        // Choose which sections will have gaps
-        const openSections = [];
-        while (openSections.length < openings) {
-            const section = Phaser.Math.Between(0, sections - 1);
-            if (!openSections.includes(section)) {
-                openSections.push(section);
-            }
+    spawnPair(level, availableTypes) {
+        try {
+            // Choose random enemy type
+            const typeInfo = Phaser.Math.RND.pick(availableTypes);
+            
+            // Vertical positions
+            const y1 = Phaser.Math.Between(100, CONFIG.GAME_HEIGHT / 2 - 50);
+            const y2 = Phaser.Math.Between(CONFIG.GAME_HEIGHT / 2 + 50, CONFIG.GAME_HEIGHT - 100);
+            
+            // Create enemies
+            this.createEnemy(CONFIG.GAME_WIDTH, y1, typeInfo, level);
+            this.createEnemy(CONFIG.GAME_WIDTH + 50, y2, typeInfo, level);
+        } catch (error) {
+            console.error("Error in EnemyManager.spawnPair:", error);
         }
-        
-        // Create obstacles for all sections except the open ones
-        for (let i = 0; i < sections; i++) {
-            if (!openSections.includes(i)) {
-                // Choose obstacle type
-                const obstacleType = Phaser.Math.RND.pick(types);
+    }
+    
+    /**
+     * Spawn a triangle formation of enemies
+     * @param {number} level - Current game level
+     * @param {Array} availableTypes - Available enemy types
+     * FIX: Added error handling
+     */
+    spawnTriangle(level, availableTypes) {
+        try {
+            // Choose random enemy type
+            const typeInfo = Phaser.Math.RND.pick(availableTypes);
+            
+            // Center position
+            const centerY = Phaser.Math.Between(150, CONFIG.GAME_HEIGHT - 150);
+            
+            // Create enemies in triangle formation
+            this.createEnemy(CONFIG.GAME_WIDTH, centerY, typeInfo, level);
+            this.createEnemy(CONFIG.GAME_WIDTH + 80, centerY - 70, typeInfo, level);
+            this.createEnemy(CONFIG.GAME_WIDTH + 80, centerY + 70, typeInfo, level);
+        } catch (error) {
+            console.error("Error in EnemyManager.spawnTriangle:", error);
+        }
+    }
+    
+    /**
+     * Spawn a line of enemies
+     * @param {number} level - Current game level
+     * @param {Array} availableTypes - Available enemy types
+     * FIX: Added error handling
+     */
+    spawnLine(level, availableTypes) {
+        try {
+            // Choose random enemy type
+            const typeInfo = Phaser.Math.RND.pick(availableTypes);
+            
+            // Vertical or horizontal line
+            const isHorizontal = Phaser.Math.RND.frac() < 0.5;
+            
+            if (isHorizontal) {
+                // Horizontal line
+                const y = Phaser.Math.Between(150, CONFIG.GAME_HEIGHT - 150);
+                const count = Phaser.Math.Between(3, 5);
+                const spacing = 80;
                 
-                // Create obstacle in this section
-                const obstacle = new Obstacle(
-                    this.scene,
-                    CONFIG.GAME_WIDTH,
-                    i * sectionHeight + sectionHeight / 2,
-                    obstacleType,
-                    { type: obstacleType }
-                );
-                
-                // Scale to section size
-                obstacle.displayHeight = sectionHeight * 0.8;
-                
-                // Add to group
-                this.obstacles.add(obstacle);
+                for (let i = 0; i < count; i++) {
+                    this.createEnemy(CONFIG.GAME_WIDTH + (i * spacing), y, typeInfo, level);
+                }
             } else {
-                // Add a power-up in some of the open sections
-                if (Phaser.Math.RND.frac() < 0.4) { // 40% chance
-                    this.scene.events.emit('spawn_powerup', {
-                        x: CONFIG.GAME_WIDTH + Phaser.Math.Between(0, 100),
-                        y: i * sectionHeight + sectionHeight / 2
-                    });
+                // Vertical line
+                const count = Phaser.Math.Between(3, 4);
+                const spacing = CONFIG.GAME_HEIGHT / (count + 1);
+                
+                for (let i = 1; i <= count; i++) {
+                    this.createEnemy(CONFIG.GAME_WIDTH, i * spacing, typeInfo, level);
                 }
             }
+        } catch (error) {
+            console.error("Error in EnemyManager.spawnLine:", error);
+        }
+    }
+    
+    /**
+     * Spawn a wave of enemies
+     * @param {number} level - Current game level
+     * @param {Array} availableTypes - Available enemy types
+     * FIX: Added error handling
+     */
+    spawnWave(level, availableTypes) {
+        try {
+            // Choose random enemy type
+            const typeInfo = Phaser.Math.RND.pick(availableTypes);
+            
+            // Wave parameters
+            const count = Phaser.Math.Between(4, 6);
+            const waveWidth = 250;
+            const centerY = Phaser.Math.Between(150, CONFIG.GAME_HEIGHT - 150);
+            
+            // Create enemies along a sine wave
+            for (let i = 0; i < count; i++) {
+                const xOffset = (i / (count - 1)) * waveWidth;
+                const yOffset = Math.sin((i / (count - 1)) * Math.PI * 2) * 80;
+                
+                this.createEnemy(
+                    CONFIG.GAME_WIDTH + xOffset,
+                    centerY + yOffset,
+                    typeInfo,
+                    level
+                );
+            }
+        } catch (error) {
+            console.error("Error in EnemyManager.spawnWave:", error);
+        }
+    }
+    
+    /**
+     * Clean up resources
+     * FIX: Added cleanup method
+     */
+    destroy() {
+        try {
+            // Clear out references
+            this.scene = null;
+            this.enemies = null;
+            this.enemyTypes = null;
+            this.formations = null;
+        } catch (error) {
+            console.error("Error in EnemyManager.destroy:", error);
         }
     }
 }
