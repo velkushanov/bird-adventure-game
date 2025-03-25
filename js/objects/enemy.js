@@ -1,7 +1,7 @@
 /**
  * Enemy Class
  * Represents enemies like turtles that the player must avoid or defeat
- * FIXED: Added proper cleanup and error handling
+ * FIXED: Added proper cleanup, error handling, and shooting functionality
  */
 class Enemy extends Phaser.Physics.Arcade.Sprite {
     /**
@@ -27,6 +27,9 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
         this.movementPattern = config.movementPattern || 'sine';
         this.health = config.health || 1;
         this.speed = config.speed || 1;
+        this.canShoot = config.canShoot || false;
+        this.shootCooldown = config.shootCooldown || 2000;
+        this.lastShotTime = 0;
         
         // Store original position for movement patterns
         this.startX = x;
@@ -47,7 +50,6 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
     
     /**
      * Create animations for the enemy
-     * FIX: Added error handling
      */
     createAnimations() {
         try {
@@ -77,7 +79,6 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
     
     /**
      * Play the appropriate animation
-     * FIX: Added error handling
      */
     playAnimation() {
         try {
@@ -95,7 +96,6 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
      * @param {number} time - Current time
      * @param {number} delta - Time since last update
      * @param {number} speed - Game speed
-     * FIX: Added active check and error handling
      */
     update(time, delta, speed) {
         if (!this.active || this.destroyed) return;
@@ -111,6 +111,18 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
             // Apply movement pattern
             this.applyMovementPattern(delta);
             
+            // Check if enemy can shoot
+            if (this.canShoot && time > this.lastShotTime + this.shootCooldown) {
+                // Random chance to shoot based on level
+                const level = this.scene.level || 1;
+                const shootChance = 0.005 * level; // 0.5% per level
+                
+                if (Math.random() < shootChance) {
+                    this.shootAtPlayer();
+                    this.lastShotTime = time;
+                }
+            }
+            
             // Remove if off screen
             if (this.x < -this.width) {
                 this.destroy();
@@ -123,7 +135,6 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
     /**
      * Apply movement pattern
      * @param {number} delta - Time since last update
-     * FIX: Added error handling and active checks
      */
     applyMovementPattern(delta) {
         if (!this.active) return;
@@ -191,7 +202,7 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
         }
     }
 
-        /**
+    /**
      * Shoot at the player
      * @returns {Phaser.GameObjects.Sprite} The created projectile
      */
@@ -208,6 +219,12 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
             // Get target (the bird)
             const target = this.scene.bird;
             if (!target || !target.active) return null;
+            
+            // Ensure enemy projectiles group exists
+            if (!this.scene.enemyProjectiles) {
+                console.error("Enemy projectiles group not found");
+                return null;
+            }
             
             // Create enemy projectile
             const projectile = this.scene.enemyProjectiles.create(
@@ -254,6 +271,7 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
                 callbackScope: this
             });
             
+            console.log("Enemy shot a projectile at player");
             return projectile;
         } catch (error) {
             console.error("Error in Enemy.shootAtPlayer:", error);
@@ -265,7 +283,6 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
      * Take damage from player or projectiles
      * @param {number} amount - Amount of damage to take
      * @returns {boolean} True if enemy was defeated
-     * FIX: Added error handling and active checks
      */
     takeDamage(amount = 1) {
         if (!this.active || this.destroyed) return false;
@@ -325,7 +342,6 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
     
     /**
      * Create death effect when enemy is defeated
-     * FIX: Added error handling
      */
     createDeathEffect() {
         try {
@@ -381,7 +397,6 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
     
     /**
      * Create hit effect when enemy is damaged but not defeated
-     * FIX: Added active check and error handling
      */
     createHitEffect() {
         if (!this.active) return;
@@ -412,7 +427,6 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
     
     /**
      * Override destroy to ensure proper cleanup
-     * FIX: Added comprehensive cleanup
      */
     destroy() {
         try {
@@ -437,7 +451,6 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
 /**
  * EnemyManager Class
  * Manages enemy generation and patterns
- * FIXED: Added proper cleanup and error handling
  */
 class EnemyManager {
     /**
@@ -455,13 +468,15 @@ class EnemyManager {
                 type: 'turtle',
                 texture: 'turtle',
                 movementPatterns: ['sine', 'chase', 'bounce'],
-                minLevel: 1
+                minLevel: 1,
+                canShoot: false
             },
             {
                 type: 'goomba',
                 texture: 'goomba',
                 movementPatterns: ['hover', 'bounce'],
-                minLevel: 2
+                minLevel: 2,
+                canShoot: true
             }
         ];
         
@@ -478,7 +493,6 @@ class EnemyManager {
     /**
      * Generate enemies based on current level
      * @param {number} level - Current game level
-     * FIX: Added error handling
      */
     generate(level) {
         try {
@@ -505,6 +519,8 @@ class EnemyManager {
             // Generate the enemies
             const formation = this.formations[selectedFormation];
             formation.call(this, level, availableTypes);
+            
+            console.log(`Generated enemies using formation ${selectedFormation + 1}`);
         } catch (error) {
             console.error("Error in EnemyManager.generate:", error);
         }
@@ -517,7 +533,6 @@ class EnemyManager {
      * @param {Object} typeInfo - Enemy type information
      * @param {number} level - Current game level
      * @returns {Enemy} The created enemy
-     * FIX: Added error handling
      */
     createEnemy(x, y, typeInfo, level) {
         try {
@@ -533,6 +548,9 @@ class EnemyManager {
             // Create enemy with scaled health based on level
             const healthBonus = Math.floor((level - 1) / 3);
             
+            // Determine if enemy can shoot (level-based chance)
+            const canShoot = typeInfo.canShoot && level >= 3; // Only enable shooting from level 3+
+            
             const enemy = new Enemy(
                 this.scene,
                 x,
@@ -542,7 +560,9 @@ class EnemyManager {
                     type: typeInfo.type,
                     movementPattern: pattern,
                     health: 1 + healthBonus,
-                    speed: 1 + (level * 0.1)
+                    speed: 1 + (level * 0.1),
+                    canShoot: canShoot,
+                    shootCooldown: 3000 - (level * 200) // Reduce cooldown with higher levels
                 }
             );
             
@@ -560,7 +580,6 @@ class EnemyManager {
      * Spawn a single enemy
      * @param {number} level - Current game level
      * @param {Array} availableTypes - Available enemy types
-     * FIX: Added error handling
      */
     spawnSingle(level, availableTypes) {
         try {
@@ -581,7 +600,6 @@ class EnemyManager {
      * Spawn a pair of enemies
      * @param {number} level - Current game level
      * @param {Array} availableTypes - Available enemy types
-     * FIX: Added error handling
      */
     spawnPair(level, availableTypes) {
         try {
@@ -604,7 +622,6 @@ class EnemyManager {
      * Spawn a triangle formation of enemies
      * @param {number} level - Current game level
      * @param {Array} availableTypes - Available enemy types
-     * FIX: Added error handling
      */
     spawnTriangle(level, availableTypes) {
         try {
@@ -627,7 +644,6 @@ class EnemyManager {
      * Spawn a line of enemies
      * @param {number} level - Current game level
      * @param {Array} availableTypes - Available enemy types
-     * FIX: Added error handling
      */
     spawnLine(level, availableTypes) {
         try {
@@ -664,7 +680,6 @@ class EnemyManager {
      * Spawn a wave of enemies
      * @param {number} level - Current game level
      * @param {Array} availableTypes - Available enemy types
-     * FIX: Added error handling
      */
     spawnWave(level, availableTypes) {
         try {
@@ -695,7 +710,6 @@ class EnemyManager {
     
     /**
      * Clean up resources
-     * FIX: Added cleanup method
      */
     destroy() {
         try {
