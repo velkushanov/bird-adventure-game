@@ -5,8 +5,31 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Bird Adventure Game</title>
     <link rel="stylesheet" href="css/style.css">
+    
     <!-- Phaser 3 Library -->
     <script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.min.js"></script>
+    
+    <!-- Prevent pinch zoom on mobile -->
+    <style>
+        * {
+            touch-action: manipulation;
+        }
+        body {
+            background-color: #1c2e4a;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+        
+        /* Fix for modal display */
+        .modal {
+            z-index: 9999 !important;
+        }
+        
+        .modal-content {
+            z-index: 10000 !important;
+        }
+    </style>
 </head>
 <body>
     <div id="game-container">
@@ -32,6 +55,7 @@
     <!-- Character Selection Modal -->
     <div id="character-modal" class="modal">
         <div class="modal-content">
+            <span class="close">&times;</span>
             <h2>Select Your Bird</h2>
             <div class="character-grid">
                 <!-- Character options will be added by JavaScript -->
@@ -43,6 +67,7 @@
     <!-- Game Over Modal -->
     <div id="gameover-modal" class="modal">
         <div class="modal-content">
+            <span class="close">&times;</span>
             <h2>Game Over</h2>
             <div id="final-score"></div>
             <div id="high-score"></div>
@@ -69,54 +94,75 @@
         </div>
     </div>
     
-    <!-- Firebase Setup (Module) -->
-<!-- Firebase App (the core Firebase SDK) -->
-<script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
-<!-- Firebase Authentication -->
-<script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
-<!-- Firebase Firestore -->
-<script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
-<!-- Firebase Realtime Database -->
-<script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
+    <!-- Firebase Setup -->
+    <!-- Firebase App (the core Firebase SDK) -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <!-- Firebase Authentication -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
+    <!-- Firebase Firestore -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
+    <!-- Firebase Realtime Database -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
 
-<script>
-  // Your web app's Firebase configuration
-  const firebaseConfig = {
-    apiKey: "AIzaSyC62BZ85vPN-e-WF904nz3A-xfzMM9YcJY",
-    authDomain: "mario-bird-game.firebaseapp.com",
-    databaseURL: "https://mario-bird-game-default-rtdb.europe-west1.firebasedatabase.app",
-    projectId: "mario-bird-game",
-    storageBucket: "mario-bird-game.firebasestorage.app",
-    messagingSenderId: "914113005062",
-    appId: "1:914113005062:web:1a81b1edb4b8159e826587",
-    measurementId: "G-LX3J7JRYG2"
-  };
+    <script>
+        // Your web app's Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyC62BZ85vPN-e-WF904nz3A-xfzMM9YcJY",
+            authDomain: "mario-bird-game.firebaseapp.com",
+            databaseURL: "https://mario-bird-game-default-rtdb.europe-west1.firebasedatabase.app",
+            projectId: "mario-bird-game",
+            storageBucket: "mario-bird-game.firebasestorage.app",
+            messagingSenderId: "914113005062",
+            appId: "1:914113005062:web:1a81b1edb4b8159e826587",
+            measurementId: "G-LX3J7JRYG2"
+        };
 
-  // Initialize Firebase with compat version (easier to use)
-  firebase.initializeApp(firebaseConfig);
-  
-  // Expose Firebase services globally
-  window.firebaseAuth = firebase.auth();
-  window.firebaseDb = firebase.firestore();
-  window.firebaseRtdb = firebase.database();
-  window.firebase = firebase; // Make the entire firebase object available
-  
-  // Signal that Firebase is loaded
-  window.firebaseLoaded = true;
-  document.dispatchEvent(new Event('firebaseLoaded'));
-</script>
+        // Initialize Firebase with compat version (easier to use)
+        try {
+            firebase.initializeApp(firebaseConfig);
+            
+            // Expose Firebase services globally
+            window.firebaseAuth = firebase.auth();
+            window.firebaseDb = firebase.firestore();
+            window.firebaseRtdb = firebase.database();
+            window.firebase = firebase; // Make the entire firebase object available
+            
+            // Signal that Firebase is loaded
+            window.firebaseLoaded = true;
+            document.dispatchEvent(new Event('firebaseLoaded'));
+            
+            console.log("Firebase initialized successfully");
+        } catch (error) {
+            console.error("Firebase initialization error:", error);
+            // Show error message
+            document.getElementById("loading-screen").innerHTML = `
+                <div class="loading-content">
+                    <h2>Error Loading Game</h2>
+                    <p>Could not connect to game services. Please try again later.</p>
+                    <button onclick="location.reload()">Retry</button>
+                </div>
+            `;
+        }
+    </script>
     
-    <!-- Game Scripts -->
+    <!-- Game Configuration -->
     <script src="js/config.js"></script>
+    
+    <!-- Utility Scripts -->
+    <script src="js/utils/gameEvents.js"></script>
     <script src="js/utils/firebase.js"></script>
     <script src="js/utils/auth.js"></script>
     <script src="js/utils/leaderboard.js"></script>
     <script src="js/utils/multiplayer.js"></script>
+    
+    <!-- Game Objects -->
     <script src="js/objects/bird.js"></script>
     <script src="js/objects/obstacle.js"></script>
     <script src="js/objects/enemy.js"></script>
     <script src="js/objects/powerup.js"></script>
     <script src="js/objects/background.js"></script>
+    
+    <!-- Game Scenes -->
     <script src="js/scenes/boot.js"></script>
     <script src="js/scenes/preloader.js"></script>
     <script src="js/scenes/mainmenu.js"></script>
@@ -124,6 +170,40 @@
     <script src="js/scenes/game.js"></script>
     <script src="js/scenes/leaderboard.js"></script>
     <script src="js/scenes/multiplayer.js"></script>
+    
+    <!-- Main Game Script -->
     <script src="js/main.js"></script>
+    
+    <!-- Add browser compatibility check -->
+    <script>
+        // Check if browser is compatible with the game
+        (function checkBrowserCompatibility() {
+            // Check for Phaser
+            if (typeof Phaser === 'undefined') {
+                document.getElementById("loading-screen").innerHTML = `
+                    <div class="loading-content">
+                        <h2>Browser Not Compatible</h2>
+                        <p>Your browser doesn't support the game. Please try using a modern browser like Chrome, Firefox, or Edge.</p>
+                    </div>
+                `;
+            }
+            
+            // Check for WebGL
+            try {
+                const canvas = document.createElement('canvas');
+                const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+                if (!gl) {
+                    document.getElementById("loading-screen").innerHTML = `
+                        <div class="loading-content">
+                            <h2>WebGL Not Supported</h2>
+                            <p>Your device doesn't support WebGL, which is required for the game. Please try using a different device or browser.</p>
+                        </div>
+                    `;
+                }
+            } catch (e) {
+                console.error("WebGL check failed:", e);
+            }
+        })();
+    </script>
 </body>
 </html>

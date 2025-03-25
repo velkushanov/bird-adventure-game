@@ -9,6 +9,10 @@ class CharacterSelectScene extends Phaser.Scene {
     }
     
     create() {
+        // Initialize state variables
+        this.isTransitioning = false;
+        this.selectedCharacter = null;
+        
         // Background
         this.bg = this.add.tileSprite(0, 0, CONFIG.GAME_WIDTH, CONFIG.GAME_HEIGHT, 'bg-sky')
             .setOrigin(0, 0)
@@ -43,20 +47,40 @@ class CharacterSelectScene extends Phaser.Scene {
                 volume: 0.7
             });
         }
+        
+        // Listen for global events if using event system
+        if (window.gameEvents) {
+            this.sceneListener = window.gameEvents.on('scene:restart', this.resetScene, this);
+        }
+        
+        // Debug text (only in debug mode)
+        if (CONFIG.DEBUG) {
+            this.debugText = this.add.text(10, CONFIG.GAME_HEIGHT - 20, 'Character Selection Debug', {
+                fontFamily: 'monospace',
+                fontSize: '12px',
+                color: '#ffff00',
+                backgroundColor: '#333333'
+            }).setDepth(100);
+        }
     }
     
     update() {
         // Scroll background
         this.bg.tilePositionX += this.bgScrollSpeed;
         
-        // Update character previews if needed
+        // Update character previews
         if (this.characterPreviews) {
             this.characterPreviews.getChildren().forEach(preview => {
                 if (preview.previewBird) {
                     // Add some idle animation to the birds
-                    preview.previewBird.y += Math.sin(this.time.now / 300 + preview.index) * 0.5;
+                    preview.previewBird.y = preview.previewBirdBaseY + Math.sin(this.time.now / 300 + preview.index) * 3;
                 }
             });
+        }
+        
+        // Update debug text if available
+        if (this.debugText) {
+            this.debugText.setText(`Selected: ${this.selectedCharacter || 'None'} | Transitioning: ${this.isTransitioning}`);
         }
     }
     
@@ -88,7 +112,21 @@ class CharacterSelectScene extends Phaser.Scene {
             // Background panel
             const bg = this.add.rectangle(0, 0, cellWidth - 20, cellHeight - 20, 0x000000, 0.5)
                 .setOrigin(0.5)
-                .setStrokeStyle(2, 0xffffff);
+                .setStrokeStyle(2, 0xffffff)
+                .setInteractive() // Make it clickable directly
+                .on('pointerdown', () => {
+                    this.selectCharacter(character.id, preview);
+                })
+                .on('pointerover', () => {
+                    if (this.selectedCharacter !== character.id) {
+                        bg.setFillStyle(0x3498db, 0.3);
+                    }
+                })
+                .on('pointerout', () => {
+                    if (this.selectedCharacter !== character.id) {
+                        bg.setFillStyle(0x000000, 0.5);
+                    }
+                });
                 
             // Character name
             const nameText = this.add.text(0, -70, character.name, {
@@ -102,15 +140,21 @@ class CharacterSelectScene extends Phaser.Scene {
             const previewBird = this.add.sprite(0, 0, character.texture, 0)
                 .setScale(2);
             
-            // Play flying animation
-            this.anims.create({
-                key: `select-fly-${character.texture}`,
-                frames: this.anims.generateFrameNumbers(character.texture, { start: 0, end: 2 }),
-                frameRate: 10,
-                repeat: -1
-            });
+            // Store base Y position for animation
+            preview.previewBirdBaseY = 0;
             
-            previewBird.play(`select-fly-${character.texture}`);
+            // Create flying animation
+            const animKey = `select-fly-${character.texture}-${index}`;
+            if (!this.anims.exists(animKey)) {
+                this.anims.create({
+                    key: animKey,
+                    frames: this.anims.generateFrameNumbers(character.texture, { start: 0, end: 2 }),
+                    frameRate: 10,
+                    repeat: -1
+                });
+            }
+            
+            previewBird.play(animKey);
             
             // Character stats
             const statsText = this.add.text(0, 50, `Flight Power: ${character.flightPower.toFixed(1)}`, {
@@ -123,99 +167,82 @@ class CharacterSelectScene extends Phaser.Scene {
             // Add all elements to the preview container
             preview.add([bg, nameText, previewBird, statsText]);
             
-            // Store reference to the bird
+            // Store references for easier access
             preview.previewBird = previewBird;
+            preview.background = bg; // Reference to background for color changes
             
-            // Make clickable
-            bg.setInteractive();
-            bg.on('pointerdown', () => {
-                this.selectCharacter(character.id, preview);
-            });
-            
-            // Add to group
+            // Add to group for management
             this.characterPreviews.add(preview);
         });
     }
     
-/**
- * Select a character
- * @param {string} characterId - The ID of the selected character
- * @param {Phaser.GameObjects.Container} preview - The preview container
- */
-selectCharacter(characterId, preview) {
-    // Play select sound
-    this.sound.play('sfx-powerup', { volume: 0.5 });
-    
-    // Update selected character
-    this.selectedCharacter = characterId;
-    
-    // Update visuals for all characters
-    this.characterPreviews.getChildren().forEach(p => {
-        // Get the background rectangle
-        const bg = p.getAt(0);
+    /**
+     * Select a character
+     * @param {string} characterId - The ID of the selected character
+     * @param {Phaser.GameObjects.Container} preview - The preview container
+     */
+    selectCharacter(characterId, preview) {
+        // Play select sound
+        this.sound.play('sfx-powerup', { volume: 0.5 });
         
-        if (p === preview) {
-            // Selected character
-            bg.setFillStyle(0x3498db, 0.7);
-            bg.setStrokeStyle(4, 0x2ecc71);
+        // Update selected character
+        this.selectedCharacter = characterId;
+        
+        // If we have active tweens, stop them first to prevent conflicts
+        this.characterPreviews.getChildren().forEach(p => {
+            if (p.activeTween) {
+                p.activeTween.stop();
+                p.activeTween = null;
+            }
+        });
+        
+        // Update visuals for all characters
+        this.characterPreviews.getChildren().forEach(p => {
+            // Get the background rectangle
+            const bg = p.getAt(0);
             
-            // Scale up the selected character
-            this.tweens.add({
-                targets: p.previewBird,
-                scaleX: 2.5,
-                scaleY: 2.5,
-                duration: 200,
-                ease: 'Back.easeOut'
-            });
-        } else {
-            // Unselected characters
-            bg.setFillStyle(0x000000, 0.5);
-            bg.setStrokeStyle(2, 0xffffff);
-            
-            // Reset scale for unselected characters
-            this.tweens.add({
-                targets: p.previewBird,
-                scaleX: 2,
-                scaleY: 2,
-                duration: 200,
-                ease: 'Back.easeOut'
-            });
+            if (p === preview) {
+                // Selected character
+                bg.setFillStyle(0x3498db, 0.7);
+                bg.setStrokeStyle(4, 0x2ecc71);
+                
+                // Scale up the selected character - store tween reference
+                if (p.previewBird) {
+                    p.activeTween = this.tweens.add({
+                        targets: p.previewBird,
+                        scaleX: 2.5,
+                        scaleY: 2.5,
+                        duration: 200,
+                        ease: 'Back.easeOut'
+                    });
+                }
+            } else {
+                // Unselected characters
+                bg.setFillStyle(0x000000, 0.5);
+                bg.setStrokeStyle(2, 0xffffff);
+                
+                // Reset scale for unselected characters - store tween reference
+                if (p.previewBird) {
+                    p.activeTween = this.tweens.add({
+                        targets: p.previewBird,
+                        scaleX: 2,
+                        scaleY: 2,
+                        duration: 200,
+                        ease: 'Back.easeOut'
+                    });
+                }
+            }
+        });
+        
+        // Enable start button
+        this.startButton.setTint(0xffffff);
+        this.startText.setColor('#ffffff');
+        
+        // Emit character selected event if using global events
+        if (window.gameEvents) {
+            window.gameEvents.emit('player:characterSelected', characterId);
         }
-    });
-    
-    // Enable start button
-    this.startButton.setTint(0xffffff);
-    this.startText.setColor('#ffffff');
-}
-
-/**
- * Start the game with selected character
- */
-startGame() {
-    if (!this.selectedCharacter) return;
-    
-    // Play start sound
-    this.sound.play('sfx-levelup', { volume: 0.7 });
-    
-    // IMPORTANT: Destroy all tweens to prevent memory leaks
-    this.tweens.killAll();
-    
-    // Transition effect
-    this.cameras.main.fade(500, 0, 0, 0, false, (camera, progress) => {
-        if (progress === 1) {
-            // Stop menu music
-            this.sound.stopByKey('music-menu');
-            
-            // Start game with selected character
-            this.scene.start('GameScene', { 
-                characterId: this.selectedCharacter
-            });
-            
-            // IMPORTANT: Shutdown this scene completely
-            this.scene.stop();
-        }
-    });
-}
+    }
     
     /**
      * Create the start button
@@ -276,7 +303,19 @@ startGame() {
             .setScale(0.6)
             .setInteractive()
             .on('pointerdown', () => {
-                this.scene.start('MainMenuScene');
+                // Prevent multiple transitions
+                if (this.isTransitioning) return;
+                this.isTransitioning = true;
+                
+                // Stop any active sounds
+                this.sound.stopByKey('sfx-powerup');
+                
+                // Start main menu scene with transition
+                this.cameras.main.fade(300, 0, 0, 0, false, (camera, progress) => {
+                    if (progress === 1) {
+                        this.scene.start('MainMenuScene');
+                    }
+                });
             });
             
         // Button text
@@ -313,8 +352,15 @@ startGame() {
     startGame() {
         if (!this.selectedCharacter) return;
         
+        // Prevent double-clicking the start button
+        if (this.isTransitioning) return;
+        this.isTransitioning = true;
+        
         // Play start sound
         this.sound.play('sfx-levelup', { volume: 0.7 });
+        
+        // IMPORTANT: Kill all tweens to prevent memory leaks
+        this.tweens.killAll();
         
         // Transition effect
         this.cameras.main.fade(500, 0, 0, 0, false, (camera, progress) => {
@@ -326,6 +372,9 @@ startGame() {
                 this.scene.start('GameScene', { 
                     characterId: this.selectedCharacter
                 });
+                
+                // IMPORTANT: Shutdown this scene completely
+                this.scene.stop();
             }
         });
     }
@@ -366,5 +415,67 @@ startGame() {
                 });
             }
         });
+    }
+    
+    /**
+     * Reset the scene
+     */
+    resetScene() {
+        this.selectedCharacter = null;
+        this.isTransitioning = false;
+        
+        // Reset button state
+        if (this.startButton) {
+            this.startButton.setTint(0x999999);
+        }
+        
+        if (this.startText) {
+            this.startText.setColor('#aaaaaa');
+        }
+        
+        // Reset character previews
+        if (this.characterPreviews) {
+            this.characterPreviews.getChildren().forEach(preview => {
+                const bg = preview.getAt(0);
+                bg.setFillStyle(0x000000, 0.5);
+                bg.setStrokeStyle(2, 0xffffff);
+                
+                if (preview.previewBird) {
+                    preview.previewBird.setScale(2);
+                }
+                
+                if (preview.activeTween) {
+                    preview.activeTween.stop();
+                    preview.activeTween = null;
+                }
+            });
+        }
+    }
+    
+    /**
+     * Clean up resources when scene is shut down
+     */
+    shutdown() {
+        // Kill all tweens
+        this.tweens.killAll();
+        
+        // Remove all event listeners
+        this.input.keyboard.shutdown();
+        
+        // Stop all sounds
+        this.sound.stopAll();
+        
+        // Clear all containers
+        if (this.characterPreviews) {
+            this.characterPreviews.clear(true, true);
+        }
+        
+        // Remove global event listeners if applicable
+        if (window.gameEvents && this.sceneListener) {
+            window.gameEvents.off('scene:restart', this.resetScene, this);
+        }
+        
+        // Call parent shutdown
+        super.shutdown();
     }
 }

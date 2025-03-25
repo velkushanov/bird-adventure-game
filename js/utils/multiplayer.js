@@ -1,7 +1,6 @@
 /**
  * Multiplayer.js
  * Handles multiplayer game functionality using Firebase Realtime Database
- * Compatible with Firebase v9 SDK exposed through window.firebaseFunctions
  */
 
 // Global multiplayer variables
@@ -9,6 +8,7 @@ let currentRoom = null;
 let playerPositionRef = null;
 let gameStateListener = null;
 let playerUpdateInterval = null;
+let firebaseListeners = []; // Track all listeners for cleanup
 
 /**
  * Ensure Firebase is loaded before executing code
@@ -18,7 +18,11 @@ function ensureFirebaseLoaded(callback) {
     if (window.firebaseLoaded) {
         callback();
     } else {
-        document.addEventListener('firebaseLoaded', callback);
+        const listener = () => {
+            callback();
+            document.removeEventListener('firebaseLoaded', listener);
+        };
+        document.addEventListener('firebaseLoaded', listener);
     }
 }
 
@@ -69,6 +73,10 @@ function createMultiplayerRoom() {
                 .then(() => {
                     currentRoom = roomId;
                     console.log("Room created successfully:", roomId);
+                    
+                    // Set up cleanup on window unload
+                    setupRoomCleanup(roomId, user.uid);
+                    
                     resolve(currentRoom);
                 })
                 .catch(error => {
@@ -83,61 +91,100 @@ function createMultiplayerRoom() {
 }
 
 /**
+ * Set up cleanup for room if user unexpectedly leaves (browser close, etc)
+ */
+function setupRoomCleanup(roomId, userId) {
+    // Don't set up multiple cleanup handlers
+    if (window.onbeforeunload) {
+        return;
+    }
+    
+    window.onbeforeunload = () => {
+        // Try to clean up room resources
+        cleanupAllFirebaseListeners();
+        
+        // If user is host, mark room for deletion
+        if (currentRoom) {
+            const userRef = window.firebase.database().ref(`rooms/${currentRoom}/players/${userId}`);
+            userRef.remove().catch(() => {});
+            
+            // Check if we're the host
+            window.firebase.database().ref(`rooms/${currentRoom}/host`).once('value')
+                .then(snapshot => {
+                    if (snapshot.val() === userId) {
+                        // We're the host, mark room for cleanup
+                        window.firebase.database().ref(`rooms/${currentRoom}/status`).set('closed')
+                            .catch(() => {});
+                    }
+                })
+                .catch(() => {});
+        }
+    };
+}
+
+/**
  * Join an existing multiplayer room
  * @param {string} roomId - Room ID to join
  * @returns {Promise<Object>} Promise that resolves with room data
  */
 function joinMultiplayerRoom(roomId) {
     return new Promise((resolve, reject) => {
-        ensureFirebaseLoaded(() => {
-            if (!isAuthenticated()) {
-                reject(new Error('Must be logged in to join a multiplayer room'));
-                return;
-            }
-            
-            const user = getCurrentUser();
-            
-            // Check if room exists and has space
-            window.firebaseFunctions.getData(`rooms/${roomId}`)
-                .then(snapshot => {
-                    const roomData = snapshot.val();
-                    
-                    if (!roomData) {
-                        throw new Error('Room not found');
-                    }
-                    
-                    // Check if game is already in progress
-                    if (roomData.status === 'playing') {
-                        throw new Error('Game already in progress');
-                    }
-                    
-                    // Check if room is full
-                    const playerCount = Object.keys(roomData.players || {}).length;
-                    if (playerCount >= roomData.maxPlayers) {
-                        throw new Error('Room is full');
-                    }
-                    
-                    // Add player to room
-                    return window.firebaseFunctions.setData(`rooms/${roomId}/players/${user.uid}`, {
-                        name: user.displayName || 'Player',
-                        ready: false,
-                        character: '',
-                        host: false,
-                        joinedAt: Date.now()
-                    });
-                })
-                .then(() => {
-                    currentRoom = roomId;
-                    return window.firebaseFunctions.getData(`rooms/${roomId}`);
-                })
-                .then(snapshot => {
-                    resolve(snapshot.val());
-                })
-                .catch(error => {
-                    console.error('Error joining room:', error);
-                    reject(error);
+        if (!window.firebase) {
+            reject(new Error("Firebase not initialized"));
+            return;
+        }
+        
+        if (!isAuthenticated()) {
+            reject(new Error('Must be logged in to join a multiplayer room'));
+            return;
+        }
+        
+        const user = getCurrentUser();
+        
+        // Check if room exists and has space
+        window.firebase.database().ref(`rooms/${roomId}`).once('value')
+            .then(snapshot => {
+                const roomData = snapshot.val();
+                
+                if (!roomData) {
+                    throw new Error('Room not found');
+                }
+                
+                // Check if game is already in progress
+                if (roomData.status === 'playing') {
+                    throw new Error('Game already in progress');
+                }
+                
+                // Check if room is full
+                const playerCount = Object.keys(roomData.players || {}).length;
+                if (playerCount >= roomData.maxPlayers) {
+                    throw new Error('Room is full');
+                }
+                
+                // Add player to room
+                return window.firebase.database().ref(`rooms/${roomId}/players/${user.uid}`).set({
+                    name: user.displayName || 'Player',
+                    ready: false,
+                    character: '',
+                    host: false,
+                    joinedAt: Date.now()
                 });
-        });
+            })
+            .then(() => {
+                currentRoom = roomId;
+                
+                // Set up cleanup on window unload
+                setupRoomCleanup(roomId, user.uid);
+                
+                return window.firebase.database().ref(`rooms/${roomId}`).once('value');
+            })
+            .then(snapshot => {
+                resolve(snapshot.val());
+            })
+            .catch(error => {
+                console.error('Error joining room:', error);
+                reject(error);
+            });
     });
 }
 
@@ -147,44 +194,47 @@ function joinMultiplayerRoom(roomId) {
  */
 function leaveMultiplayerRoom() {
     return new Promise((resolve, reject) => {
-        ensureFirebaseLoaded(() => {
-            if (!currentRoom) {
-                resolve();
-                return;
-            }
-            
-            const user = getCurrentUser();
-            if (!user) {
-                resolve();
-                return;
-            }
-            
+        if (!currentRoom) {
+            cleanupAllFirebaseListeners();
+            resolve();
+            return;
+        }
+        
+        const user = getCurrentUser();
+        if (!user) {
+            cleanupAllFirebaseListeners();
+            currentRoom = null;
+            resolve();
+            return;
+        }
+        
+        try {
             // Remove player from room
-            window.firebaseFunctions.removeData(`rooms/${currentRoom}/players/${user.uid}`)
+            window.firebase.database().ref(`rooms/${currentRoom}/players/${user.uid}`).remove()
                 .then(() => {
                     // Check if room is now empty
-                    return window.firebaseFunctions.getData(`rooms/${currentRoom}/players`);
+                    return window.firebase.database().ref(`rooms/${currentRoom}/players`).once('value');
                 })
                 .then(snapshot => {
                     const players = snapshot.val();
                     
                     if (!players || Object.keys(players).length === 0) {
                         // Room is empty, delete it
-                        return window.firebaseFunctions.removeData(`rooms/${currentRoom}`);
+                        return window.firebase.database().ref(`rooms/${currentRoom}`).remove();
                     }
                     
                     // Get current room data to check if user was host
-                    return window.firebaseFunctions.getData(`rooms/${currentRoom}`)
+                    return window.firebase.database().ref(`rooms/${currentRoom}`).once('value')
                         .then(roomSnapshot => {
                             const roomData = roomSnapshot.val();
                             
                             // If current user was host, assign new host
-                            if (user.uid === roomData.host) {
+                            if (roomData && user.uid === roomData.host) {
                                 const newHostId = Object.keys(players)[0];
                                 
                                 return Promise.all([
-                                    window.firebaseFunctions.setData(`rooms/${currentRoom}/host`, newHostId),
-                                    window.firebaseFunctions.setData(`rooms/${currentRoom}/players/${newHostId}/host`, true)
+                                    window.firebase.database().ref(`rooms/${currentRoom}/host`).set(newHostId),
+                                    window.firebase.database().ref(`rooms/${currentRoom}/players/${newHostId}/host`).set(true)
                                 ]);
                             }
                             
@@ -194,25 +244,84 @@ function leaveMultiplayerRoom() {
                 .then(() => {
                     currentRoom = null;
                     
-                    // Clean up listeners
-                    if (gameStateListener) {
-                        gameStateListener();
-                        gameStateListener = null;
-                    }
+                    // Clean up all listeners
+                    cleanupAllFirebaseListeners();
                     
                     if (playerUpdateInterval) {
                         clearInterval(playerUpdateInterval);
                         playerUpdateInterval = null;
                     }
                     
+                    // Remove window unload handler
+                    window.onbeforeunload = null;
+                    
                     resolve();
                 })
                 .catch(error => {
                     console.error('Error leaving room:', error);
+                    
+                    // Still clean up resources even if there was an error
+                    currentRoom = null;
+                    cleanupAllFirebaseListeners();
+                    
+                    if (playerUpdateInterval) {
+                        clearInterval(playerUpdateInterval);
+                        playerUpdateInterval = null;
+                    }
+                    
+                    // Remove window unload handler
+                    window.onbeforeunload = null;
+                    
                     reject(error);
                 });
-        });
+        } catch (error) {
+            console.error('Exception leaving room:', error);
+            
+            // Still clean up resources
+            currentRoom = null;
+            cleanupAllFirebaseListeners();
+            
+            if (playerUpdateInterval) {
+                clearInterval(playerUpdateInterval);
+                playerUpdateInterval = null;
+            }
+            
+            // Remove window unload handler
+            window.onbeforeunload = null;
+            
+            reject(error);
+        }
     });
+}
+
+/**
+ * Clean up all Firebase listeners
+ */
+function cleanupAllFirebaseListeners() {
+    // Clean up game state listener
+    if (gameStateListener && typeof gameStateListener === 'function') {
+        try {
+            gameStateListener();
+            gameStateListener = null;
+        } catch (e) {
+            console.error("Error cleaning up game state listener:", e);
+        }
+    }
+    
+    // Clean up all tracked listeners
+    firebaseListeners.forEach(listener => {
+        try {
+            if (typeof listener.off === 'function') {
+                listener.off();
+            } else if (typeof listener === 'function') {
+                listener();
+            }
+        } catch (e) {
+            console.error("Error cleaning up Firebase listener:", e);
+        }
+    });
+    
+    firebaseListeners = [];
 }
 
 /**
@@ -222,17 +331,15 @@ function leaveMultiplayerRoom() {
  */
 function setPlayerReady(isReady) {
     return new Promise((resolve, reject) => {
-        ensureFirebaseLoaded(() => {
-            if (!currentRoom || !isAuthenticated()) {
-                reject(new Error('Not in a room or not authenticated'));
-                return;
-            }
-            
-            const user = getCurrentUser();
-            window.firebaseFunctions.setData(`rooms/${currentRoom}/players/${user.uid}/ready`, isReady)
-                .then(() => resolve())
-                .catch(error => reject(error));
-        });
+        if (!currentRoom || !isAuthenticated()) {
+            reject(new Error('Not in a room or not authenticated'));
+            return;
+        }
+        
+        const user = getCurrentUser();
+        window.firebase.database().ref(`rooms/${currentRoom}/players/${user.uid}/ready`).set(isReady)
+            .then(() => resolve())
+            .catch(error => reject(error));
     });
 }
 
@@ -243,17 +350,15 @@ function setPlayerReady(isReady) {
  */
 function setPlayerCharacter(characterId) {
     return new Promise((resolve, reject) => {
-        ensureFirebaseLoaded(() => {
-            if (!currentRoom || !isAuthenticated()) {
-                reject(new Error('Not in a room or not authenticated'));
-                return;
-            }
-            
-            const user = getCurrentUser();
-            window.firebaseFunctions.setData(`rooms/${currentRoom}/players/${user.uid}/character`, characterId)
-                .then(() => resolve())
-                .catch(error => reject(error));
-        });
+        if (!currentRoom || !isAuthenticated()) {
+            reject(new Error('Not in a room or not authenticated'));
+            return;
+        }
+        
+        const user = getCurrentUser();
+        window.firebase.database().ref(`rooms/${currentRoom}/players/${user.uid}/character`).set(characterId)
+            .then(() => resolve())
+            .catch(error => reject(error));
     });
 }
 
@@ -263,43 +368,50 @@ function setPlayerCharacter(characterId) {
  */
 function startMultiplayerGame() {
     return new Promise((resolve, reject) => {
-        ensureFirebaseLoaded(() => {
-            if (!currentRoom || !isAuthenticated()) {
-                reject(new Error('Not in a room or not authenticated'));
-                return;
-            }
-            
-            // Get current room data
-            getCurrentRoomData()
-                .then(roomData => {
-                    const user = getCurrentUser();
-                    
-                    if (roomData.host !== user.uid) {
-                        throw new Error('Only the host can start the game');
+        if (!currentRoom || !isAuthenticated()) {
+            reject(new Error('Not in a room or not authenticated'));
+            return;
+        }
+        
+        // Get current room data
+        getCurrentRoomData()
+            .then(roomData => {
+                const user = getCurrentUser();
+                
+                if (roomData.host !== user.uid) {
+                    throw new Error('Only the host can start the game');
+                }
+                
+                // Check if all players are ready
+                let allReady = true;
+                let playerCount = 0;
+                
+                for (const playerId in roomData.players) {
+                    playerCount++;
+                    if (!roomData.players[playerId].ready) {
+                        allReady = false;
+                        break;
                     }
-                    
-                    // Check if all players are ready
-                    let allReady = true;
-                    for (const playerId in roomData.players) {
-                        if (!roomData.players[playerId].ready) {
-                            allReady = false;
-                            break;
-                        }
-                    }
-                    
-                    if (!allReady) {
-                        throw new Error('Not all players are ready');
-                    }
-                    
-                    // Update room status to playing
-                    return window.firebaseFunctions.updateData(`rooms/${currentRoom}`, {
-                        status: 'playing',
-                        startedAt: Date.now()
-                    });
-                })
-                .then(() => resolve())
-                .catch(error => reject(error));
-        });
+                }
+                
+                if (!allReady) {
+                    throw new Error('Not all players are ready');
+                }
+                
+                if (playerCount < 2) {
+                    throw new Error('At least 2 players are required');
+                }
+                
+                // Update room status to playing
+                const updates = {
+                    status: 'playing',
+                    startedAt: Date.now()
+                };
+                
+                return window.firebase.database().ref(`rooms/${currentRoom}`).update(updates);
+            })
+            .then(() => resolve())
+            .catch(error => reject(error));
     });
 }
 
@@ -309,23 +421,21 @@ function startMultiplayerGame() {
  */
 function getCurrentRoomData() {
     return new Promise((resolve, reject) => {
-        ensureFirebaseLoaded(() => {
-            if (!currentRoom) {
-                reject(new Error('Not in a room'));
-                return;
-            }
-            
-            window.firebaseFunctions.getData(`rooms/${currentRoom}`)
-                .then(snapshot => {
-                    const roomData = snapshot.val();
-                    if (!roomData) {
-                        throw new Error('Room not found');
-                    }
-                    
-                    resolve(roomData);
-                })
-                .catch(error => reject(error));
-        });
+        if (!currentRoom) {
+            reject(new Error('Not in a room'));
+            return;
+        }
+        
+        window.firebase.database().ref(`rooms/${currentRoom}`).once('value')
+            .then(snapshot => {
+                const roomData = snapshot.val();
+                if (!roomData) {
+                    throw new Error('Room not found');
+                }
+                
+                resolve(roomData);
+            })
+            .catch(error => reject(error));
     });
 }
 
@@ -339,9 +449,10 @@ function listenToRoomChanges(callback) {
         return () => {};
     }
     
-    ensureFirebaseLoaded(() => {
+    try {
         // Set up a listener for room changes
-        const unsubscribe = window.firebaseFunctions.onValueChange(`rooms/${currentRoom}`, snapshot => {
+        const roomRef = window.firebase.database().ref(`rooms/${currentRoom}`);
+        const onRoomChange = roomRef.on('value', snapshot => {
             const roomData = snapshot.val();
             if (roomData) {
                 callback(roomData);
@@ -350,13 +461,30 @@ function listenToRoomChanges(callback) {
                 callback(null);
                 currentRoom = null;
             }
+        }, error => {
+            console.error("Error in room listener:", error);
+            // Keep the app functional even if there's an error
+            callback(null);
         });
+        
+        // Track this listener
+        firebaseListeners.push({
+            off: () => roomRef.off('value', onRoomChange)
+        });
+        
+        // Store reference to cleanup function
+        const unsubscribe = () => {
+            roomRef.off('value', onRoomChange);
+        };
         
         gameStateListener = unsubscribe;
         
         // Return function to stop listening
         return unsubscribe;
-    });
+    } catch (error) {
+        console.error("Error setting up room listener:", error);
+        return () => {};
+    }
 }
 
 /**
@@ -364,22 +492,36 @@ function listenToRoomChanges(callback) {
  * @param {Phaser.Physics.Arcade.Sprite} bird - Player bird sprite
  */
 function startMultiplayerSync(bird) {
-    ensureFirebaseLoaded(() => {
-        if (!currentRoom || !isAuthenticated()) {
+    if (!currentRoom || !isAuthenticated()) {
+        return;
+    }
+    
+    const user = getCurrentUser();
+    
+    // Clear any existing interval
+    if (playerUpdateInterval) {
+        clearInterval(playerUpdateInterval);
+    }
+    
+    // Update position every 100ms
+    playerUpdateInterval = setInterval(() => {
+        if (!currentRoom) {
+            // Stop syncing if no longer in a room
+            clearInterval(playerUpdateInterval);
+            playerUpdateInterval = null;
             return;
         }
         
-        const user = getCurrentUser();
-        
-        // Update position every 100ms
-        playerUpdateInterval = setInterval(() => {
-            window.firebaseFunctions.setData(`rooms/${currentRoom}/players/${user.uid}/position`, {
+        try {
+            window.firebase.database().ref(`rooms/${currentRoom}/players/${user.uid}/position`).set({
                 x: bird.x,
                 y: bird.y,
                 timestamp: Date.now()
             });
-        }, 100);
-    });
+        } catch (error) {
+            console.error("Error updating player position:", error);
+        }
+    }, 100);
 }
 
 /**
@@ -402,9 +544,10 @@ function listenToPlayerPositions(callback) {
         return () => {};
     }
     
-    ensureFirebaseLoaded(() => {
+    try {
         // Set up listener for player positions
-        const unsubscribe = window.firebaseFunctions.onValueChange(`rooms/${currentRoom}/players`, snapshot => {
+        const playersRef = window.firebase.database().ref(`rooms/${currentRoom}/players`);
+        const onPlayersChange = playersRef.on('value', snapshot => {
             const players = snapshot.val() || {};
             const positions = {};
             
@@ -423,11 +566,23 @@ function listenToPlayerPositions(callback) {
             }
             
             callback(positions);
+        }, error => {
+            console.error("Error in player positions listener:", error);
+        });
+        
+        // Track this listener
+        firebaseListeners.push({
+            off: () => playersRef.off('value', onPlayersChange)
         });
         
         // Return function to stop listening
-        return unsubscribe;
-    });
+        return () => {
+            playersRef.off('value', onPlayersChange);
+        };
+    } catch (error) {
+        console.error("Error setting up player positions listener:", error);
+        return () => {};
+    }
 }
 
 /**
@@ -436,36 +591,39 @@ function listenToPlayerPositions(callback) {
  */
 function listMultiplayerRooms() {
     return new Promise((resolve, reject) => {
-        ensureFirebaseLoaded(() => {
-            window.firebaseFunctions.getData('rooms')
-                .then(snapshot => {
-                    const rooms = [];
-                    const roomsData = snapshot.val() || {};
+        if (!window.firebase) {
+            reject(new Error("Firebase not initialized"));
+            return;
+        }
+        
+        window.firebase.database().ref('rooms').once('value')
+            .then(snapshot => {
+                const rooms = [];
+                const roomsData = snapshot.val() || {};
+                
+                for (const roomId in roomsData) {
+                    const roomData = roomsData[roomId];
                     
-                    for (const roomId in roomsData) {
-                        const roomData = roomsData[roomId];
+                    // Only include rooms that are waiting for players
+                    if (roomData.status === 'waiting') {
+                        const playerCount = Object.keys(roomData.players || {}).length;
                         
-                        // Only include rooms that are waiting for players
-                        if (roomData.status === 'waiting') {
-                            const playerCount = Object.keys(roomData.players || {}).length;
-                            
-                            rooms.push({
-                                id: roomId,
-                                host: roomData.hostName,
-                                players: playerCount,
-                                maxPlayers: roomData.maxPlayers,
-                                createdAt: roomData.createdAt
-                            });
-                        }
+                        rooms.push({
+                            id: roomId,
+                            host: roomData.hostName || 'Unknown Host',
+                            players: playerCount,
+                            maxPlayers: roomData.maxPlayers || 4,
+                            createdAt: roomData.createdAt || Date.now()
+                        });
                     }
-                    
-                    resolve(rooms);
-                })
-                .catch(error => {
-                    console.error('Error listing rooms:', error);
-                    reject(error);
-                });
-        });
+                }
+                
+                resolve(rooms);
+            })
+            .catch(error => {
+                console.error('Error listing rooms:', error);
+                reject(error);
+            });
     });
 }
 
@@ -476,19 +634,19 @@ function listMultiplayerRooms() {
  */
 function endMultiplayerGame(finalScores) {
     return new Promise((resolve, reject) => {
-        ensureFirebaseLoaded(() => {
-            if (!currentRoom) {
-                resolve();
-                return;
-            }
-            
-            window.firebaseFunctions.updateData(`rooms/${currentRoom}`, {
-                status: 'ended',
-                endedAt: Date.now(),
-                finalScores: finalScores
-            })
-                .then(() => resolve())
-                .catch(error => reject(error));
-        });
+        if (!currentRoom) {
+            resolve();
+            return;
+        }
+        
+        const updates = {
+            status: 'ended',
+            endedAt: Date.now(),
+            finalScores: finalScores || {}
+        };
+        
+        window.firebase.database().ref(`rooms/${currentRoom}`).update(updates)
+            .then(() => resolve())
+            .catch(error => reject(error));
     });
 }

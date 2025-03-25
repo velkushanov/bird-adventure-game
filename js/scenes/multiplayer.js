@@ -11,6 +11,10 @@ class MultiplayerScene extends Phaser.Scene {
         this.roomListeners = [];
         this.otherPlayers = {};
         this.debugText = null; // For debugging
+        this.connectionListener = null;
+        this.connectivityTimeout = null;
+        this.characterSelectModal = null;
+        this.startedGame = false; // Flag to prevent multiple game starts
     }
     
     create() {
@@ -72,27 +76,31 @@ class MultiplayerScene extends Phaser.Scene {
     /**
      * Check connection to Firebase
      */
-// Find the checkFirebaseConnection() method and replace it with this:
     checkFirebaseConnection() {
         // Update debug text
         this.debugText.setText('Checking Firebase connection...');
         
         // Set a timeout for connectivity check
-        setTimeout(() => {
+        this.connectivityTimeout = setTimeout(() => {
             if (window.firebase) {
                 this.debugText.setText('Firebase loaded. Checking connection...');
                 
                 try {
-                    // Use the compat version which is much simpler
+                    // Use the database ref directly with an error handler
                     const connectedRef = window.firebase.database().ref('.info/connected');
                     
-                    connectedRef.on('value', (snap) => {
+                    // Store the listener reference for later cleanup
+                    this.connectionListener = connectedRef.on('value', (snap) => {
                         if (snap.val() === true) {
                             this.debugText.setText('Connected to Firebase ✓');
                         } else {
                             this.debugText.setText('WARNING: Not connected to Firebase ✗');
                             this.showConnectionError();
                         }
+                    }, (error) => {
+                        this.debugText.setText(`Firebase error: ${error.message}`);
+                        console.error("Firebase connection error:", error);
+                        this.showConnectionError();
                     });
                 } catch (err) {
                     this.debugText.setText(`Firebase error: ${err.message}`);
@@ -104,7 +112,8 @@ class MultiplayerScene extends Phaser.Scene {
                 this.showConnectionError();
             }
         }, 3000);
-    }    
+    }
+    
     /**
      * Show connection error message
      */
@@ -907,7 +916,7 @@ class MultiplayerScene extends Phaser.Scene {
         }
         
         // Update ready button text based on current ready status
-        if (currentUser) {
+        if (currentUser && players && players[currentUser.uid]) {
             const playerData = players[currentUser.uid];
             if (playerData) {
                 if (playerData.ready) {
@@ -937,6 +946,11 @@ class MultiplayerScene extends Phaser.Scene {
         // Toggle ready status
         getCurrentRoomData()
             .then(roomData => {
+                if (!roomData || !roomData.players) {
+                    this.debugText.setText("Error: Room data not available");
+                    return;
+                }
+                
                 const playerData = roomData.players[currentUser.uid];
                 if (playerData) {
                     // Toggle ready status
@@ -953,6 +967,8 @@ class MultiplayerScene extends Phaser.Scene {
                             .then(() => this.debugText.setText("Ready status updated successfully"))
                             .catch(err => this.debugText.setText(`Error updating ready status: ${err.message}`));
                     }
+                } else {
+                    this.debugText.setText("Error: Player data not found in room");
                 }
             })
             .catch(error => {
@@ -965,6 +981,11 @@ class MultiplayerScene extends Phaser.Scene {
      * Show character selection for multiplayer
      */
     showCharacterSelection() {
+        // First, clear any existing modal to prevent stacking
+        if (this.characterSelectModal) {
+            this.characterSelectModal.destroy();
+        }
+        
         // Create modal container
         this.characterSelectModal = this.add.container(0, 0);
         
@@ -996,6 +1017,27 @@ class MultiplayerScene extends Phaser.Scene {
             align: 'center'
         }).setOrigin(0.5);
         
+        // Close button
+        const closeButton = this.add.text(
+            CONFIG.GAME_WIDTH / 2 + 280, 
+            CONFIG.GAME_HEIGHT / 2 - 170, 
+            'X', 
+            {
+                fontFamily: 'Arial',
+                fontSize: '24px',
+                color: '#ff0000',
+                align: 'center'
+            }
+        ).setOrigin(0.5)
+        .setInteractive()
+        .on('pointerdown', () => {
+            // Destroy the modal when close button is clicked
+            if (this.characterSelectModal) {
+                this.characterSelectModal.destroy();
+                this.characterSelectModal = null;
+            }
+        });
+        
         // Character options container
         const charactersContainer = this.add.container(0, 0);
         
@@ -1003,7 +1045,7 @@ class MultiplayerScene extends Phaser.Scene {
         this.createCharacterOptions(charactersContainer);
         
         // Add elements to modal
-        this.characterSelectModal.add([modalBg, modalPanel, titleText, charactersContainer]);
+        this.characterSelectModal.add([modalBg, modalPanel, titleText, closeButton, charactersContainer]);
         
         // Set depth to be above other UI
         this.characterSelectModal.setDepth(100);
@@ -1133,21 +1175,10 @@ class MultiplayerScene extends Phaser.Scene {
             })
             .then(() => {
                 this.debugText.setText("Character selected and ready status set to true");
-                // Close character selection modal - IMPORTANT FIX
+                // Close character selection modal
                 if (this.characterSelectModal) {
-                    // Kill all tweens related to the modal
-                    this.tweens.killTweensOf(this.characterSelectModal.getAll());
                     this.characterSelectModal.destroy();
                     this.characterSelectModal = null;
-                    
-                    // Make sure modal background is also removed
-                    this.children.getAll().forEach(child => {
-                        if (child instanceof Phaser.GameObjects.Rectangle && 
-                            child.width === CONFIG.GAME_WIDTH && 
-                            child.height === CONFIG.GAME_HEIGHT) {
-                            child.destroy();
-                        }
-                    });
                 }
             })
             .catch(error => {
@@ -1255,11 +1286,32 @@ class MultiplayerScene extends Phaser.Scene {
     cleanupRoomListeners() {
         this.roomListeners.forEach(unsubscribe => {
             if (typeof unsubscribe === 'function') {
-                unsubscribe();
+                try {
+                    unsubscribe();
+                } catch (e) {
+                    console.error("Error unsubscribing:", e);
+                }
             }
         });
         
         this.roomListeners = [];
+        
+        // Also clean up connection listener if it exists
+        if (this.connectionListener && window.firebase) {
+            try {
+                const connectedRef = window.firebase.database().ref('.info/connected');
+                connectedRef.off('value', this.connectionListener);
+                this.connectionListener = null;
+            } catch (e) {
+                console.error("Error removing connection listener:", e);
+            }
+        }
+        
+        // Clear any timeout
+        if (this.connectivityTimeout) {
+            clearTimeout(this.connectivityTimeout);
+            this.connectivityTimeout = null;
+        }
     }
     
     /**
@@ -1348,6 +1400,26 @@ class MultiplayerScene extends Phaser.Scene {
     shutdown() {
         // Clean up room listeners
         this.cleanupRoomListeners();
+        
+        // Leave room if in one
+        if (this.selectedRoom) {
+            leaveMultiplayerRoom().catch(e => console.error("Error leaving room during shutdown:", e));
+        }
+        
+        // Kill all tweens
+        this.tweens.killAll();
+        
+        // Remove all event listeners
+        this.input.keyboard.shutdown();
+        
+        // Stop all sounds
+        this.sound.stopAll();
+        
+        // Clear any modal that might be open
+        if (this.characterSelectModal) {
+            this.characterSelectModal.destroy();
+            this.characterSelectModal = null;
+        }
         
         // Call parent shutdown
         super.shutdown();

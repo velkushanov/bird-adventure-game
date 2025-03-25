@@ -1,20 +1,30 @@
 /**
  * Firebase.js
  * Handles Firebase initialization and core functionality
- * This version works with the Firebase v9 SDK (exposed via window.firebaseFunctions)
  */
 
 // User data
 let currentUser = null;
+let firebaseInitialized = false;
 
 /**
  * Wait for Firebase to load before initializing
  */
 function ensureFirebaseLoaded(callback) {
-    if (window.firebaseLoaded) {
+    if (window.firebaseLoaded && firebaseInitialized) {
         callback();
+    } else if (window.firebaseLoaded) {
+        // Firebase is loaded but not initialized yet
+        initializeFirebase();
+        // Set a short timeout to allow initialization to complete
+        setTimeout(callback, 500);
     } else {
-        document.addEventListener('firebaseLoaded', callback);
+        const listener = () => {
+            initializeFirebase();
+            setTimeout(callback, 500);
+            document.removeEventListener('firebaseLoaded', listener);
+        };
+        document.addEventListener('firebaseLoaded', listener);
     }
 }
 
@@ -22,38 +32,149 @@ function ensureFirebaseLoaded(callback) {
  * Initialize Firebase with configuration
  */
 function initializeFirebase() {
+    if (firebaseInitialized) {
+        return;
+    }
+    
     if (window.firebase) {
         console.log('Firebase compat version initialized');
         
-        // Set up auth state listener
-        window.firebase.auth().onAuthStateChanged(user => {
-            if (user) {
-                // User is signed in
-                currentUser = {
-                    uid: user.uid,
-                    displayName: user.displayName || 'Player',
-                    email: user.email,
-                    photoURL: user.photoURL
-                };
+        try {
+            // Set up auth state listener
+            window.firebase.auth().onAuthStateChanged(user => {
+                if (user) {
+                    // User is signed in
+                    currentUser = {
+                        uid: user.uid,
+                        displayName: user.displayName || 'Player',
+                        email: user.email,
+                        photoURL: user.photoURL
+                    };
+                    
+                    try {
+                        // Create or update user document in Firestore
+                        window.firebase.firestore().collection('users').doc(user.uid).set({
+                            displayName: user.displayName || 'Player',
+                            email: user.email,
+                            photoURL: user.photoURL,
+                            lastLogin: firebase.firestore.FieldValue.serverTimestamp()
+                        }, { merge: true });
+                    } catch (error) {
+                        console.error('Error updating user document:', error);
+                    }
+                    
+                    console.log('User signed in:', currentUser.displayName);
+                    
+                    // Dispatch event for other components to know user is signed in
+                    document.dispatchEvent(new CustomEvent('userSignedIn', { detail: currentUser }));
+                } else {
+                    // User is signed out
+                    currentUser = null;
+                    console.log('User signed out');
+                    
+                    // Dispatch event for other components
+                    document.dispatchEvent(new Event('userSignedOut'));
+                }
+            });
+            
+            // Add Firebase functions to window for easy access
+            window.firebaseFunctions = {
+                // Auth functions
+                signInWithGoogle: () => {
+                    const provider = new firebase.auth.GoogleAuthProvider();
+                    return firebase.auth().signInWithPopup(provider);
+                },
+                signOut: () => firebase.auth().signOut(),
                 
-                // Create or update user document in Firestore
-                window.firebase.firestore().collection('users').doc(user.uid).set({
-                    displayName: user.displayName || 'Player',
-                    email: user.email,
-                    photoURL: user.photoURL,
-                    lastLogin: firebase.firestore.FieldValue.serverTimestamp()
-                }, { merge: true });
+                // Firestore functions
+                getDocument: (collection, id) => {
+                    return window.firebase.firestore().collection(collection).doc(id).get();
+                },
+                setDocument: (collection, id, data) => {
+                    return window.firebase.firestore().collection(collection).doc(id).set(data);
+                },
+                updateDocument: (collection, id, data) => {
+                    return window.firebase.firestore().collection(collection).doc(id).update(data);
+                },
+                addDocument: (collection, data) => {
+                    return window.firebase.firestore().collection(collection).add(data);
+                },
+                getCollection: (collection, constraints = []) => {
+                    let query = window.firebase.firestore().collection(collection);
+                    
+                    constraints.forEach(constraint => {
+                        query = query.where(constraint.field, constraint.operator, constraint.value);
+                    });
+                    
+                    return query.get().then(snapshot => {
+                        const results = [];
+                        snapshot.forEach(doc => {
+                            results.push({
+                                id: doc.id,
+                                ...doc.data()
+                            });
+                        });
+                        return results;
+                    });
+                },
                 
-                console.log('User signed in:', currentUser.displayName);
-            } else {
-                // User is signed out
-                currentUser = null;
-                console.log('User signed out');
-            }
-        });
+                // Realtime Database functions
+                getData: (path) => {
+                    return window.firebase.database().ref(path).once('value');
+                },
+                setData: (path, data) => {
+                    return window.firebase.database().ref(path).set(data);
+                },
+                updateData: (path, data) => {
+                    return window.firebase.database().ref(path).update(data);
+                },
+                removeData: (path) => {
+                    return window.firebase.database().ref(path).remove();
+                },
+                onValueChange: (path, callback) => {
+                    const ref = window.firebase.database().ref(path);
+                    ref.on('value', callback);
+                    return () => ref.off('value', callback);
+                },
+                
+                // Helper functions
+                serverTimestamp: () => firebase.firestore.FieldValue.serverTimestamp(),
+                databaseTimestamp: () => firebase.database.ServerValue.TIMESTAMP,
+                
+                // Query constraints
+                where: (field, operator, value) => ({
+                    field,
+                    operator,
+                    value
+                }),
+                orderBy: (field, direction) => ({
+                    field,
+                    direction
+                }),
+                limit: (value) => ({
+                    type: 'limit',
+                    value
+                })
+            };
+            
+            firebaseInitialized = true;
+            
+            // Dispatch event for other components to know Firebase is ready
+            document.dispatchEvent(new Event('firebaseInitialized'));
+        } catch (error) {
+            console.error('Error initializing Firebase:', error);
+        }
     } else {
         console.error("Firebase not available - check script loading");
     }
+}
+
+/**
+ * Check if Firebase is initialized
+ * @returns {boolean} True if Firebase is initialized
+ */
+function isFirebaseInitialized() {
+    return firebaseInitialized;
 }
 
 /**
@@ -77,12 +198,17 @@ function getCurrentUser() {
  * @returns {Promise} Promise that resolves when sign out is complete
  */
 function signOut() {
-    return window.firebaseFunctions.signOut()
+    if (!window.firebase) {
+        return Promise.reject(new Error("Firebase not initialized"));
+    }
+    
+    return window.firebase.auth().signOut()
         .then(() => {
             console.log('User signed out successfully');
         })
         .catch(error => {
             console.error('Error signing out:', error);
+            throw error;
         });
 }
 
@@ -93,62 +219,72 @@ function signOut() {
  */
 function saveScore(score) {
     if (!isAuthenticated()) {
-        console.error('Cannot save score: User not authenticated');
-        return 0;
+        console.warn('Cannot save score: User not authenticated');
+        return score;
+    }
+    
+    if (!window.firebase) {
+        console.error("Firebase not initialized");
+        return score;
     }
     
     const userId = currentUser.uid;
     
-    // First get the user document to check their high score
-    return window.firebaseFunctions.getDocument('users', userId)
-        .then(docSnapshot => {
-            let highScore = 0;
-            let userData = {};
-            
-            if (docSnapshot.exists()) {
-                // Get existing data
-                userData = docSnapshot.data();
-                highScore = userData.highScore || 0;
+    try {
+        // First get the user document to check their high score
+        return window.firebase.firestore().collection('users').doc(userId).get()
+            .then(docSnapshot => {
+                let highScore = 0;
+                let userData = {};
                 
-                // Only update if new score is higher
-                if (score > highScore) {
-                    highScore = score;
+                if (docSnapshot.exists) {
+                    // Get existing data
+                    userData = docSnapshot.data();
+                    highScore = userData.highScore || 0;
                     
-                    // Update user document with new high score
-                    window.firebaseFunctions.updateDocument('users', userId, {
-                        highScore: highScore,
-                        lastPlayed: window.firebaseFunctions.serverTimestamp()
+                    // Only update if new score is higher
+                    if (score > highScore) {
+                        highScore = score;
+                        
+                        // Update user document with new high score
+                        window.firebase.firestore().collection('users').doc(userId).update({
+                            highScore: highScore,
+                            lastPlayed: firebase.firestore.FieldValue.serverTimestamp()
+                        });
+                        
+                        // Add score to global leaderboard
+                        addScoreToLeaderboard(score);
+                    } else {
+                        // Just update lastPlayed
+                        window.firebase.firestore().collection('users').doc(userId).update({
+                            lastPlayed: firebase.firestore.FieldValue.serverTimestamp()
+                        });
+                    }
+                } else {
+                    // User document doesn't exist, create it
+                    highScore = score;
+                    window.firebase.firestore().collection('users').doc(userId).set({
+                        displayName: currentUser.displayName,
+                        email: currentUser.email,
+                        photoURL: currentUser.photoURL,
+                        highScore: score,
+                        lastPlayed: firebase.firestore.FieldValue.serverTimestamp()
                     });
                     
                     // Add score to global leaderboard
                     addScoreToLeaderboard(score);
-                } else {
-                    // Just update lastPlayed
-                    window.firebaseFunctions.updateDocument('users', userId, {
-                        lastPlayed: window.firebaseFunctions.serverTimestamp()
-                    });
                 }
-            } else {
-                // User document doesn't exist, create it
-                highScore = score;
-                window.firebaseFunctions.setDocument('users', userId, {
-                    displayName: currentUser.displayName,
-                    email: currentUser.email,
-                    photoURL: currentUser.photoURL,
-                    highScore: score,
-                    lastPlayed: window.firebaseFunctions.serverTimestamp()
-                });
                 
-                // Add score to global leaderboard
-                addScoreToLeaderboard(score);
-            }
-            
-            return highScore;
-        })
-        .catch(error => {
-            console.error('Error saving score:', error);
-            return 0;
-        });
+                return highScore;
+            })
+            .catch(error => {
+                console.error('Error saving score:', error);
+                return score;
+            });
+    } catch (error) {
+        console.error('Exception saving score:', error);
+        return score;
+    }
 }
 
 /**
@@ -156,40 +292,44 @@ function saveScore(score) {
  * @param {number} score - Player's score
  */
 function addScoreToLeaderboard(score) {
-    if (!isAuthenticated()) return;
+    if (!isAuthenticated() || !window.firebase) return;
     
-    const now = new Date();
-    const userId = currentUser.uid;
-    const playerName = currentUser.displayName || 'Player';
-    
-    // Add to global leaderboard
-    window.firebaseFunctions.addDocument('leaderboard', {
-        userId: userId,
-        name: playerName,
-        score: score,
-        timestamp: window.firebaseFunctions.serverTimestamp()
-    });
-    
-    // Add to daily leaderboard
-    const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
-    window.firebaseFunctions.addDocument(`leaderboard_daily/${dateStr}/scores`, {
-        userId: userId,
-        name: playerName,
-        score: score,
-        timestamp: window.firebaseFunctions.serverTimestamp()
-    });
-    
-    // Add to weekly leaderboard
-    // Get ISO week number
-    const weekNum = getWeekNumber(now);
-    const weekStr = `${now.getFullYear()}-W${weekNum}`;
-    
-    window.firebaseFunctions.addDocument(`leaderboard_weekly/${weekStr}/scores`, {
-        userId: userId,
-        name: playerName,
-        score: score,
-        timestamp: window.firebaseFunctions.serverTimestamp()
-    });
+    try {
+        const now = new Date();
+        const userId = currentUser.uid;
+        const playerName = currentUser.displayName || 'Player';
+        
+        // Add to global leaderboard
+        window.firebase.firestore().collection('leaderboard').add({
+            userId: userId,
+            name: playerName,
+            score: score,
+            timestamp: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        
+        // Add to daily leaderboard
+        const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
+        window.firebase.firestore().collection(`leaderboard_daily/${dateStr}/scores`).add({
+            userId: userId,
+            name: playerName,
+            score: score,
+            timestamp: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        
+        // Add to weekly leaderboard
+        // Get ISO week number
+        const weekNum = getWeekNumber(now);
+        const weekStr = `${now.getFullYear()}-W${weekNum}`;
+        
+        window.firebase.firestore().collection(`leaderboard_weekly/${weekStr}/scores`).add({
+            userId: userId,
+            name: playerName,
+            score: score,
+            timestamp: firebase.firestore.FieldValue.serverTimestamp()
+        });
+    } catch (error) {
+        console.error('Error adding score to leaderboard:', error);
+    }
 }
 
 /**
@@ -206,94 +346,21 @@ function getWeekNumber(date) {
 }
 
 /**
- * Get top scores from leaderboard
- * @param {number} limit - Number of scores to retrieve
- * @param {string} timeframe - Time frame ('all', 'daily', 'weekly')
- * @returns {Promise<Array>} Promise that resolves with array of score objects
- */
-function getTopScores(limit = 10, timeframe = 'all') {
-    ensureFirebaseLoaded(() => {
-        let constraints = [
-            window.firebaseFunctions.orderBy('score', 'desc'),
-            window.firebaseFunctions.limit(limit)
-        ];
-        
-        let collectionPath = 'leaderboard';
-        
-        if (timeframe === 'daily') {
-            // Get today's date
-            const today = new Date().toISOString().split('T')[0];
-            collectionPath = `leaderboard_daily/${today}/scores`;
-        } else if (timeframe === 'weekly') {
-            // Get current week
-            const now = new Date();
-            const weekNum = getWeekNumber(now);
-            const weekStr = `${now.getFullYear()}-W${weekNum}`;
-            collectionPath = `leaderboard_weekly/${weekStr}/scores`;
-        }
-        
-        return window.firebaseFunctions.getCollection(collectionPath, constraints)
-            .then(scores => {
-                return scores.map(score => ({
-                    id: score.id,
-                    name: score.name || 'Unknown Player',
-                    score: score.score || 0,
-                    timestamp: score.timestamp ? new Date(score.timestamp.seconds * 1000) : new Date()
-                }));
-            })
-            .catch(error => {
-                console.error('Error getting top scores:', error);
-                return [];
-            });
-    });
-}
-
-/**
- * Get user's high score
- * @param {string} userId - User ID (optional, uses current user if not provided)
- * @returns {Promise<number>} Promise that resolves with user's high score
- */
-function getUserHighScore(userId = null) {
-    ensureFirebaseLoaded(() => {
-        const uid = userId || (currentUser ? currentUser.uid : null);
-        
-        if (!uid) {
-            return Promise.resolve(0);
-        }
-        
-        return window.firebaseFunctions.getDocument('users', uid)
-            .then(docSnapshot => {
-                if (docSnapshot.exists()) {
-                    const userData = docSnapshot.data();
-                    return userData.highScore || 0;
-                }
-                return 0;
-            })
-            .catch(error => {
-                console.error('Error getting user high score:', error);
-                return 0;
-            });
-    });
-}
-
-/**
  * Update player status (for multiplayer)
  * @param {string} status - Player status ('menu', 'playing', 'waiting')
  */
 function updatePlayerStatus(status) {
-    ensureFirebaseLoaded(() => {
-        if (!isAuthenticated()) return;
-        
+    if (!isAuthenticated() || !window.firebase) return;
+    
+    try {
         const userId = currentUser.uid;
-        const statusPath = `players/${userId}/status`;
         
         // Update status
-        window.firebaseFunctions.setData(statusPath, {
+        window.firebase.database().ref(`players/${userId}/status`).set({
             status: status,
             lastUpdated: Date.now()
         });
-        
-        // Remove data when disconnected
-        // Note: This is handled differently in Firebase v9 and would require server-side onDisconnect functionality
-    });
+    } catch (error) {
+        console.error('Error updating player status:', error);
+    }
 }
