@@ -258,7 +258,10 @@ class GameScene extends Phaser.Scene {
      * Setup multiplayer functionality
      */
     setupMultiplayer() {
-        console.log("Setting up multiplayer game");
+        console.log("Setting up multiplayer game with roomId:", this.roomId);
+        
+        // Create a group for other players
+        this.otherPlayerSprites = {};
         
         // Start syncing player position
         if (this.bird) {
@@ -271,12 +274,14 @@ class GameScene extends Phaser.Scene {
         // Set up multiplayer timers (same as single player for now)
         this.setupTimers();
     }
-    
+
     /**
      * Update other players' positions in multiplayer
      * @param {Object} playerData - Data of other players
      */
     updateOtherPlayers(playerData) {
+        console.log("Updating other players, received data for", Object.keys(playerData).length, "players");
+        
         if (!playerData) return;
         
         // Process each player
@@ -284,15 +289,21 @@ class GameScene extends Phaser.Scene {
             const player = playerData[playerId];
             
             // Skip if no position data or character
-            if (!player.position || !player.character) continue;
+            if (!player.position || !player.character) {
+                console.log("Skipping player with missing data:", playerId, player);
+                continue;
+            }
             
             // Find the character texture 
             const character = CONFIG.CHARACTERS.find(c => c.id === player.character);
-            if (!character) continue;
+            if (!character) {
+                console.log("Character not found for player:", playerId, player.character);
+                continue;
+            }
             
             // Create or update player sprite
             if (!this.otherPlayerSprites[playerId]) {
-                console.log(`Creating sprite for player ${playerId} with character ${player.character}`);
+                console.log(`Creating sprite for player ${playerId} with character ${player.character} at position X:${player.position.x} Y:${player.position.y}`);
                 
                 // Create new sprite for this player
                 const sprite = this.add.sprite(
@@ -309,7 +320,7 @@ class GameScene extends Phaser.Scene {
                     {
                         fontFamily: 'Arial',
                         fontSize: '14px',
-                        fill: '#FFFFFF',
+                        color: '#FFFFFF',
                         stroke: '#000000',
                         strokeThickness: 3
                     }
@@ -338,22 +349,21 @@ class GameScene extends Phaser.Scene {
                 // Update player count display
                 this.updatePlayerCountDisplay();
             } else {
-                // Update existing sprite
+                // Update existing sprite if position data is newer
                 const spriteData = this.otherPlayerSprites[playerId];
                 const sprite = spriteData.sprite;
                 const nameTag = spriteData.nameTag;
                 
-                // Only update if position data is newer
                 if (player.position.timestamp > spriteData.lastUpdate) {
-                    // Smooth movement with tweens instead of direct position changes
-                    this.tweens.add({
-                        targets: sprite,
-                        x: player.position.x,
-                        y: player.position.y,
-                        rotation: player.position.rotation || 0,
-                        duration: 50, // Short duration for smoother updates
-                        ease: 'Linear'
-                    });
+                    console.log(`Updating player ${playerId} to position X:${player.position.x} Y:${player.position.y}`);
+                    
+                    // Set position directly for smoother updates
+                    sprite.x = player.position.x;
+                    sprite.y = player.position.y;
+                    
+                    if (player.position.rotation !== undefined) {
+                        sprite.rotation = player.position.rotation;
+                    }
                     
                     // Update name tag position
                     nameTag.x = player.position.x;
@@ -379,6 +389,7 @@ class GameScene extends Phaser.Scene {
         // Remove sprites for players no longer in the room
         for (const playerId in this.otherPlayerSprites) {
             if (!playerData[playerId]) {
+                console.log("Player left:", playerId);
                 // Player left, remove their sprite
                 const spriteData = this.otherPlayerSprites[playerId];
                 if (spriteData.sprite) spriteData.sprite.destroy();
@@ -390,7 +401,7 @@ class GameScene extends Phaser.Scene {
             }
         }
     }
-    
+
     /**
      * Update the player count display in multiplayer
      */

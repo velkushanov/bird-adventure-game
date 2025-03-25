@@ -729,6 +729,7 @@ class MultiplayerScene extends Phaser.Scene {
             
             // Check if game is starting
             if (roomData.status === 'playing') {
+                console.log('Game is starting...');
                 this.debugText.setText('Game is starting...');
                 this.startMultiplayerGame(roomData);
             }
@@ -1207,7 +1208,7 @@ class MultiplayerScene extends Phaser.Scene {
                     }
                 }
                 
-                if (allReady && playerCount > 1) {
+                if (allReady && playerCount > 0) { // Changed from 1 to allow single player test
                     // Play button sound
                     this.sound.play('sfx-levelup', { volume: 0.7 });
                     
@@ -1224,8 +1225,8 @@ class MultiplayerScene extends Phaser.Scene {
                             this.debugText.setText(`Error starting game: ${error.message}`);
                             alert('Failed to start game: ' + error.message);
                         });
-                } else if (playerCount <= 1) {
-                    this.debugText.setText("Can't start: Need at least 2 players");
+                } else if (playerCount <= 0) {
+                    this.debugText.setText("Can't start: Need at least 1 player");
                     alert('You need at least one more player to start a multiplayer game.');
                 } else {
                     this.debugText.setText("Can't start: Not all players ready");

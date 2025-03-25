@@ -10,6 +10,19 @@ let gameStateListener = null;
 let playerUpdateInterval = null;
 let firebaseListeners = []; // Track all listeners for cleanup
 
+// Debug flag - set to true for verbose logging
+const MULTIPLAYER_DEBUG = true;
+
+/**
+ * Debug logging function for multiplayer
+ * @param {...any} args - Arguments to log
+ */
+function mpLog(...args) {
+    if (MULTIPLAYER_DEBUG) {
+        console.log('[Multiplayer]', ...args);
+    }
+}
+
 /**
  * Ensure Firebase is loaded before executing code
  * @param {Function} callback - Function to execute when Firebase is loaded
@@ -45,6 +58,7 @@ function createMultiplayerRoom() {
             }
             
             const user = getCurrentUser();
+            mpLog("Creating room for user:", user.uid, user.displayName);
             
             // Create a new room data object
             const roomData = {
@@ -73,11 +87,11 @@ function createMultiplayerRoom() {
             // Create a new room with a unique ID
             const roomId = 'room_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
             
-            console.log("Creating room:", roomId, roomData);
+            mpLog("Creating room with ID:", roomId, roomData);
             window.firebase.database().ref(`rooms/${roomId}`).set(roomData)
                 .then(() => {
                     currentRoom = roomId;
-                    console.log("Room created successfully:", roomId);
+                    mpLog("Room created successfully:", roomId);
                     
                     // Set up cleanup on window unload
                     setupRoomCleanup(roomId, user.uid);
@@ -145,6 +159,7 @@ function joinMultiplayerRoom(roomId) {
         }
         
         const user = getCurrentUser();
+        mpLog("Joining room:", roomId, "User:", user.uid);
         
         // Check if room exists and has space
         window.firebase.database().ref(`rooms/${roomId}`).once('value')
@@ -182,6 +197,7 @@ function joinMultiplayerRoom(roomId) {
             })
             .then(() => {
                 currentRoom = roomId;
+                mpLog("Successfully joined room:", roomId);
                 
                 // Set up cleanup on window unload
                 setupRoomCleanup(roomId, user.uid);
@@ -218,6 +234,8 @@ function leaveMultiplayerRoom() {
             return;
         }
         
+        mpLog("Leaving room:", currentRoom);
+        
         try {
             // Remove player from room
             window.firebase.database().ref(`rooms/${currentRoom}/players/${user.uid}`).remove()
@@ -230,6 +248,7 @@ function leaveMultiplayerRoom() {
                     
                     if (!players || Object.keys(players).length === 0) {
                         // Room is empty, delete it
+                        mpLog("Room is empty, removing room:", currentRoom);
                         return window.firebase.database().ref(`rooms/${currentRoom}`).remove();
                     }
                     
@@ -241,6 +260,7 @@ function leaveMultiplayerRoom() {
                             // If current user was host, assign new host
                             if (roomData && user.uid === roomData.host) {
                                 const newHostId = Object.keys(players)[0];
+                                mpLog("Assigning new host:", newHostId);
                                 
                                 return Promise.all([
                                     window.firebase.database().ref(`rooms/${currentRoom}/host`).set(newHostId),
@@ -266,6 +286,7 @@ function leaveMultiplayerRoom() {
                     // Remove window unload handler
                     window.onbeforeunload = null;
                     
+                    mpLog("Successfully left room");
                     resolve();
                 })
                 .catch(error => {
@@ -348,6 +369,8 @@ function setPlayerReady(isReady) {
         }
         
         const user = getCurrentUser();
+        mpLog("Setting player ready status:", isReady, "User:", user.uid);
+        
         window.firebase.database().ref(`rooms/${currentRoom}/players/${user.uid}/ready`).set(isReady)
             .then(() => resolve())
             .catch(error => reject(error));
@@ -367,6 +390,8 @@ function setPlayerCharacter(characterId) {
         }
         
         const user = getCurrentUser();
+        mpLog("Setting player character:", characterId, "User:", user.uid);
+        
         window.firebase.database().ref(`rooms/${currentRoom}/players/${user.uid}/character`).set(characterId)
             .then(() => resolve())
             .catch(error => reject(error));
@@ -383,6 +408,8 @@ function startMultiplayerGame() {
             reject(new Error('Not in a room or not authenticated'));
             return;
         }
+        
+        mpLog("Starting multiplayer game");
         
         // Get current room data
         getCurrentRoomData()
@@ -409,8 +436,8 @@ function startMultiplayerGame() {
                     throw new Error('Not all players are ready');
                 }
                 
-                if (playerCount < 2) {
-                    throw new Error('At least 2 players are required');
+                if (playerCount < 1) { // Changed from 2 to 1 for testing
+                    throw new Error('At least 1 player is required');
                 }
                 
                 // Update room status to playing
@@ -419,6 +446,7 @@ function startMultiplayerGame() {
                     startedAt: Date.now()
                 };
                 
+                mpLog("Game starting with updates:", updates);
                 return window.firebase.database().ref(`rooms/${currentRoom}`).update(updates);
             })
             .then(() => resolve())
@@ -461,14 +489,18 @@ function listenToRoomChanges(callback) {
     }
     
     try {
+        mpLog("Setting up room listener for room:", currentRoom);
+        
         // Set up a listener for room changes
         const roomRef = window.firebase.database().ref(`rooms/${currentRoom}`);
         const onRoomChange = roomRef.on('value', snapshot => {
             const roomData = snapshot.val();
             if (roomData) {
+                mpLog("Room data updated:", roomData.status);
                 callback(roomData);
             } else {
                 // Room was deleted
+                mpLog("Room was deleted");
                 callback(null);
                 currentRoom = null;
             }
@@ -485,6 +517,7 @@ function listenToRoomChanges(callback) {
         
         // Store reference to cleanup function
         const unsubscribe = () => {
+            mpLog("Unsubscribing from room changes");
             roomRef.off('value', onRoomChange);
         };
         
@@ -515,7 +548,29 @@ function startMultiplayerSync(bird) {
         clearInterval(playerUpdateInterval);
     }
     
-    console.log("Starting position sync for multiplayer");
+    mpLog("Starting position sync for player:", user.uid, "in room:", currentRoom);
+    
+    // Send initial position immediately
+    try {
+        const initialPosition = {
+            x: bird.x,
+            y: bird.y,
+            rotation: bird.rotation,
+            scale: bird.scale,
+            tint: bird.tintTopLeft || 0xffffff,
+            timestamp: Date.now()
+        };
+        
+        window.firebase.database().ref(`rooms/${currentRoom}/players/${user.uid}/position`).update(initialPosition)
+            .then(() => {
+                mpLog("Initial position sent successfully:", initialPosition);
+            })
+            .catch(error => {
+                console.error("Error sending initial position:", error);
+            });
+    } catch (error) {
+        console.error("Exception sending initial position:", error);
+    }
     
     // Update position every 50ms (more frequent updates for smoother gameplay)
     playerUpdateInterval = setInterval(() => {
@@ -533,19 +588,22 @@ function startMultiplayerSync(bird) {
                     x: bird.x,
                     y: bird.y,
                     rotation: bird.rotation,
-                    scale: bird.scale,
+                    scale: bird.scaleX, // Use scaleX since it's a number not an object
                     tint: bird.tintTopLeft || 0xffffff, // Store tint for visual effects
                     timestamp: Date.now()
                 };
                 
-                window.firebase.database().ref(`rooms/${currentRoom}/players/${user.uid}/position`).update(position);
+                window.firebase.database().ref(`rooms/${currentRoom}/players/${user.uid}/position`).update(position)
+                    .catch(error => {
+                        mpLog("Error updating position:", error.message);
+                    });
             }
         } catch (error) {
             console.error("Error updating player position:", error);
         }
     }, 50); // More frequent updates
 
-    console.log("Multiplayer position sync started");
+    mpLog("Multiplayer position sync started");
 }
 
 /**
@@ -555,7 +613,7 @@ function stopMultiplayerSync() {
     if (playerUpdateInterval) {
         clearInterval(playerUpdateInterval);
         playerUpdateInterval = null;
-        console.log("Multiplayer position sync stopped");
+        mpLog("Multiplayer position sync stopped");
     }
 }
 
@@ -566,11 +624,12 @@ function stopMultiplayerSync() {
  */
 function listenToPlayerPositions(callback) {
     if (!currentRoom) {
+        mpLog("Cannot listen to player positions: not in a room");
         return () => {};
     }
     
     try {
-        console.log("Setting up player positions listener");
+        mpLog("Setting up player positions listener for room:", currentRoom);
         
         // Set up listener for player positions - More efficient approach
         // Only listen to the players node to reduce unnecessary data transfer
@@ -594,6 +653,7 @@ function listenToPlayerPositions(callback) {
                 }
             }
             
+            mpLog("Got positions for", Object.keys(positions).length, "other players");
             callback(positions);
         }, error => {
             console.error("Error in player positions listener:", error);
@@ -604,7 +664,7 @@ function listenToPlayerPositions(callback) {
             off: () => playersRef.off('value', onPlayersChange)
         });
         
-        console.log("Player positions listener established");
+        mpLog("Player positions listener established");
         
         // Return function to stop listening
         return () => {
@@ -626,6 +686,8 @@ function listMultiplayerRooms() {
             reject(new Error("Firebase not initialized"));
             return;
         }
+        
+        mpLog("Listing available multiplayer rooms");
         
         window.firebase.database().ref('rooms').once('value')
             .then(snapshot => {
@@ -649,6 +711,7 @@ function listMultiplayerRooms() {
                     }
                 }
                 
+                mpLog("Found", rooms.length, "available rooms");
                 resolve(rooms);
             })
             .catch(error => {
@@ -670,6 +733,8 @@ function endMultiplayerGame(finalScores) {
             return;
         }
         
+        mpLog("Ending multiplayer game with scores:", finalScores);
+        
         const updates = {
             status: 'ended',
             endedAt: Date.now(),
@@ -677,7 +742,13 @@ function endMultiplayerGame(finalScores) {
         };
         
         window.firebase.database().ref(`rooms/${currentRoom}`).update(updates)
-            .then(() => resolve())
-            .catch(error => reject(error));
+            .then(() => {
+                mpLog("Game ended successfully");
+                resolve();
+            })
+            .catch(error => {
+                console.error("Error ending game:", error);
+                reject(error);
+            });
     });
 }
