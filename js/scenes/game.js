@@ -814,64 +814,10 @@ class GameScene extends Phaser.Scene {
      * @returns {Phaser.GameObjects.Sprite} The created fireball or null if can't shoot
      */
     shootFireball() {
-        if (!this.isShooting || this.isDead) return null;
-        
-        // Implement cooldown to prevent too many fireballs
-        const currentTime = this.scene.time.now;
-        if (currentTime - this.lastFireballTime < CONFIG.FIREBALL_RATE) {
-            return null;
+        // Simply call the bird's shootFireball method if it exists
+        if (this.bird && this.bird.shootFireball) {
+            this.bird.shootFireball();
         }
-        
-        // Update last fireball time
-        this.lastFireballTime = currentTime;
-        
-        // Get the fireballs group from the scene or from the bird property
-        // This is the key fix - we try both ways to get the fireballs group
-        const fireballsGroup = this.fireballs || this.scene.fireballs;
-        
-        if (!fireballsGroup) {
-            console.error("Fireballs group not found in bird or scene");
-            return null;
-        }
-        
-        // Create fireball with proper physics setup
-        const fireball = fireballsGroup.create(
-            this.x + this.width / 2,
-            this.y,
-            'fireball'
-        );
-        
-        // Configure fireball physics
-        fireball.body.allowGravity = false;
-        fireball.setVelocityX(CONFIG.FIREBALL_SPEED);
-        
-        // Set a proper collision size
-        fireball.body.setSize(fireball.width * 0.8, fireball.height * 0.8);
-        
-        // Mark fireball as managed to prevent double destruction
-        fireball.managed = true;
-        
-        // Add a lifespan to ensure fireballs don't stay forever
-        this.scene.time.delayedCall(5000, () => {
-            if (fireball && fireball.active && !fireball.destroyed) {
-                fireball.destroyed = true;
-                fireball.destroy();
-            }
-        });
-        
-        // Add rotation animation via tweens (without onComplete to avoid race conditions)
-        this.scene.tweens.add({
-            targets: fireball,
-            angle: 360,
-            duration: 1000,
-            repeat: -1
-        });
-        
-        // Play sound
-        this.scene.sound.play('sfx-fireball', { volume: 0.5 });
-        
-        // Return the fireball
-        return fireball;
     }
     
     /**
@@ -881,7 +827,7 @@ class GameScene extends Phaser.Scene {
      */
     hitEnemyWithFireball(fireball, enemy) {
         // Mark as destroyed to prevent double destruction
-        if (fireball.destroyed || enemy.destroyed) return;
+        if (!fireball || !enemy || fireball.destroyed || enemy.destroyed) return;
         
         fireball.destroyed = true;
         enemy.destroyed = true;
@@ -1196,8 +1142,9 @@ class GameScene extends Phaser.Scene {
         this.isGameOver = true;
         
         // Resume physics if paused
-        if (this.physics) {
+        if (this.physics && this.physics.world) {
             this.physics.resume();
+            this.physics.world.resume();
         }
         
         // Clean up multiplayer resources
@@ -1228,25 +1175,35 @@ class GameScene extends Phaser.Scene {
         this.input.keyboard.shutdown();
         this.input.off('pointerdown');
         
-        // Clear all groups
+        // Clear all groups with proper cleanup
         if (this.obstacles) {
             this.obstacles.clear(true, true);
+            this.obstacles.destroy();
+            this.obstacles = null;
         }
         
         if (this.enemies) {
             this.enemies.clear(true, true);
+            this.enemies.destroy();
+            this.enemies = null;
         }
         
         if (this.powerUps) {
             this.powerUps.clear(true, true);
+            this.powerUps.destroy();
+            this.powerUps = null;
         }
         
         if (this.fireballs) {
             this.fireballs.clear(true, true);
+            this.fireballs.destroy();
+            this.fireballs = null;
         }
         
         if (this.multiplayer) {
             this.multiplayer.clear(true, true);
+            this.multiplayer.destroy();
+            this.multiplayer = null;
         }
         
         // Destroy bird properly if it exists

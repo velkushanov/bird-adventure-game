@@ -145,6 +145,8 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
         // Already big, just reset the timer
         if (this.isBig) {
             if (this.mushroomTimer) this.mushroomTimer.remove();
+            if (this.mushroomBlinkTimer) this.mushroomBlinkTimer.remove();
+            if (this.mushroomBlinkTween) this.mushroomBlinkTween.stop();
         } else {
             // Become big
             this.isBig = true;
@@ -165,6 +167,28 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
             
             // Add shrink effect
             this.addShrinkEffect();
+            
+            // Clear blinking effect
+            if (this.mushroomBlinkTween) {
+                this.mushroomBlinkTween.stop();
+                this.clearTint();
+                this.alpha = 1;
+            }
+        }, [], this);
+        
+        // Set timer for blinking warning (1 second before expiration)
+        this.mushroomBlinkTimer = this.scene.time.delayedCall(CONFIG.MUSHROOM_DURATION - 1000, () => {
+            // Start blinking effect
+            this.mushroomBlinkTween = this.scene.tweens.add({
+                targets: this,
+                alpha: 0.5,
+                duration: 100,
+                yoyo: true,
+                repeat: 9, // 10 blinks in 1 second
+                onComplete: () => {
+                    if (this.active) this.alpha = 1; // Reset alpha when done
+                }
+            });
         }, [], this);
     }
     
@@ -175,6 +199,8 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
         // Already shooting, just reset the timer
         if (this.isShooting) {
             if (this.flowerTimer) this.flowerTimer.remove();
+            if (this.flowerBlinkTimer) this.flowerBlinkTimer.remove();
+            if (this.flowerBlinkTween) this.flowerBlinkTween.stop();
         } else {
             // Enable shooting
             this.isShooting = true;
@@ -193,6 +219,28 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
             
             // Remove glow effect
             this.removeGlowEffect();
+            
+            // Clear blinking effect
+            if (this.flowerBlinkTween) {
+                this.flowerBlinkTween.stop();
+                this.clearTint();
+                this.alpha = 1;
+            }
+        }, [], this);
+        
+        // Set timer for blinking warning (1 second before expiration)
+        this.flowerBlinkTimer = this.scene.time.delayedCall(CONFIG.FLOWER_DURATION - 1000, () => {
+            // Start blinking effect
+            this.flowerBlinkTween = this.scene.tweens.add({
+                targets: this,
+                alpha: 0.5,
+                duration: 100,
+                yoyo: true,
+                repeat: 9, // 10 blinks in 1 second
+                onComplete: () => {
+                    if (this.active) this.alpha = 1; // Reset alpha when done
+                }
+            });
         }, [], this);
     }
     
@@ -203,6 +251,8 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
         // Already invulnerable, just reset the timer
         if (this.isInvulnerable) {
             if (this.invulnerabilityTimer) this.invulnerabilityTimer.remove();
+            if (this.invulnerabilityBlinkTimer) this.invulnerabilityBlinkTimer.remove();
+            if (this.invulnerabilityBlinkTween) this.invulnerabilityBlinkTween.stop();
         } else {
             // Become invulnerable
             this.isInvulnerable = true;
@@ -221,6 +271,33 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
             
             // Remove star effect
             this.removeStarEffect();
+            
+            // Clear blinking effect
+            if (this.invulnerabilityBlinkTween) {
+                this.invulnerabilityBlinkTween.stop();
+                this.alpha = 1;
+            }
+        }, [], this);
+        
+        // Set timer for blinking warning (1 second before expiration)
+        this.invulnerabilityBlinkTimer = this.scene.time.delayedCall(9000, () => { // 10000 - 1000 = 9000
+            // Start more intense blinking effect
+            if (this.starTimer) {
+                // Don't remove the star timer, just add additional blinking
+                // this.starTimer.remove();
+                // this.starTimer = null;
+            }
+            
+            this.invulnerabilityBlinkTween = this.scene.tweens.add({
+                targets: this,
+                alpha: 0.3,
+                duration: 100,
+                yoyo: true,
+                repeat: 9, // 10 blinks in 1 second
+                onComplete: () => {
+                    if (this.active) this.alpha = 1; // Reset alpha when done
+                }
+            });
         }, [], this);
     }
     
@@ -481,10 +558,6 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
         });
     }
     
-    /**
-     * Shoot a fireball
-     * @returns {Phaser.GameObjects.Sprite} The created fireball or null if can't shoot
-     */
     shootFireball() {
         if (!this.isShooting || this.isDead) return null;
         
@@ -497,12 +570,11 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
         // Update last fireball time
         this.lastFireballTime = currentTime;
         
-        // Get the fireballs group from the scene or from the bird property
-        // This is the key fix - we try both ways to get the fireballs group
-        const fireballsGroup = this.fireballs || this.scene.fireballs;
+        // Access the fireballs group from the scene
+        const fireballsGroup = this.scene.fireballs;
         
         if (!fireballsGroup) {
-            console.error("Fireballs group not found in bird or scene");
+            console.error("Fireballs group not found in scene");
             return null;
         }
         
@@ -512,6 +584,11 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
             this.y,
             'fireball'
         );
+        
+        if (!fireball || !fireball.body) {
+            console.error("Failed to create fireball or fireball has no physics body");
+            return null;
+        }
         
         // Configure fireball physics
         fireball.body.allowGravity = false;
@@ -531,7 +608,7 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
             }
         });
         
-        // Add rotation animation via tweens (without onComplete to avoid race conditions)
+        // Add rotation animation via tweens
         this.scene.tweens.add({
             targets: fireball,
             angle: 360,
@@ -556,6 +633,13 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
         // Clean up effects
         if (this.effects) this.effects.destroy();
         if (this.trail) this.trail.destroy();
+        
+        // Clean up tweens
+        if (this.mushroomBlinkTween) this.mushroomBlinkTween.stop();
+        if (this.flowerBlinkTween) this.flowerBlinkTween.stop();
+        if (this.invulnerabilityBlinkTween) this.invulnerabilityBlinkTween.stop();
+        if (this.growTween) this.growTween.stop();
+        if (this.glowTween) this.glowTween.stop();
         
         // Clean up event listeners
         this.scene.events.off('powerup_mushroom', this.activateMushroom, this);

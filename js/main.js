@@ -528,36 +528,47 @@ function restartGame() {
         // Clean up all active scenes first
         cleanupGameScenes();
         
-        // Find the current active scene
-        const activeScenes = gameInstance.scene.getScenes(true);
-        let currentScene = null;
-        
-        // Look for GameScene specifically
-        for (let i = 0; i < activeScenes.length; i++) {
-            if (activeScenes[i].scene.key === 'GameScene') {
-                currentScene = activeScenes[i];
-                break;
-            }
+        // More aggressive cleanup
+        if (gameInstance.tweens) {
+            gameInstance.tweens.killAll();
         }
         
-        // If GameScene found, properly shut it down
-        if (currentScene) {
-            console.log('Shutting down GameScene before restart');
-            
-            // Use our safer transition method
-            transitionToScene('GameScene', 'CharacterSelectScene', {}, false);
-        } else {
-            // If no GameScene, use any active scene
-            currentScene = activeScenes[0];
-            
-            if (currentScene) {
-                console.log('Starting CharacterSelectScene from', currentScene.scene.key);
-                currentScene.scene.start('CharacterSelectScene');
-            } else {
-                // Last resort - reload the page
-                console.error('No active scenes found, reloading page');
-                location.reload();
+        try {
+            // Stop all active scenes with a more direct approach
+            const activeScenes = gameInstance.scene.getScenes(true);
+            for (let i = 0; i < activeScenes.length; i++) {
+                if (activeScenes[i] && activeScenes[i].scene) {
+                    const sceneName = activeScenes[i].scene.key;
+                    console.log('Stopping scene:', sceneName);
+                    
+                    if (activeScenes[i].cleanup && typeof activeScenes[i].cleanup === 'function') {
+                        activeScenes[i].cleanup();
+                    }
+                    
+                    try {
+                        gameInstance.scene.stop(sceneName);
+                    } catch (e) {
+                        console.warn('Error stopping scene:', e);
+                    }
+                }
             }
+            
+            // Short delay to ensure scenes are fully stopped
+            setTimeout(() => {
+                // Start character select scene
+                console.log('Starting CharacterSelectScene');
+                try {
+                    gameInstance.scene.start('CharacterSelectScene');
+                } catch (e) {
+                    console.error('Error starting CharacterSelectScene:', e);
+                    // Last resort - reload page
+                    location.reload();
+                }
+            }, 100);
+        } catch (error) {
+            console.error('Error during scene transition:', error);
+            // Fallback to reload
+            location.reload();
         }
     } catch (error) {
         console.error('Critical error restarting game:', error);
