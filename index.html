@@ -70,77 +70,41 @@
     </div>
     
     <!-- Firebase Setup (Module) -->
-    <script type="module">
-        // Import Firebase modules
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
-        import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js";
-        import { getFirestore, collection, doc, getDoc, setDoc, updateDoc, addDoc, query, where, orderBy, limit, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
-        import { getDatabase, ref, set, get, onValue, remove, update, onDisconnect } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js";
+<!-- Firebase App (the core Firebase SDK) -->
+<script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+<!-- Firebase Authentication -->
+<script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
+<!-- Firebase Firestore -->
+<script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
+<!-- Firebase Realtime Database -->
+<script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
 
-        // Add this line - make ref function available globally
-        window.databaseRef = ref;
+<script>
+  // Your web app's Firebase configuration
+  const firebaseConfig = {
+    apiKey: "AIzaSyC62BZ85vPN-e-WF904nz3A-xfzMM9YcJY",
+    authDomain: "mario-bird-game.firebaseapp.com",
+    databaseURL: "https://mario-bird-game-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "mario-bird-game",
+    storageBucket: "mario-bird-game.firebasestorage.app",
+    messagingSenderId: "914113005062",
+    appId: "1:914113005062:web:1a81b1edb4b8159e826587",
+    measurementId: "G-LX3J7JRYG2"
+  };
 
-        // Your web app's Firebase configuration
-        const firebaseConfig = {
-            apiKey: "AIzaSyC62BZ85vPN-e-WF904nz3A-xfzMM9YcJY",
-            authDomain: "mario-bird-game.firebaseapp.com",
-            databaseURL: "https://mario-bird-game-default-rtdb.europe-west1.firebasedatabase.app",
-            projectId: "mario-bird-game",
-            storageBucket: "mario-bird-game.firebasestorage.app",
-            messagingSenderId: "914113005062",
-            appId: "1:914113005062:web:1a81b1edb4b8159e826587",
-            measurementId: "G-LX3J7JRYG2"
-        };
-
-        // Initialize Firebase
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const firestore = getFirestore(app);
-        const database = getDatabase(app);
-        const googleProvider = new GoogleAuthProvider();
-        
-        // Expose Firebase to window for non-module scripts
-        window.firebaseApp = app;
-        window.firebaseAuth = auth;
-        window.firebaseDb = firestore;
-        window.firebaseRtdb = database;
-        
-        // Expose Firebase functions to window
-        window.firebaseFunctions = {
-            // Auth functions
-            signInWithGoogle: () => signInWithPopup(auth, googleProvider),
-            signOut: () => signOut(auth),
-            onAuthStateChanged: (callback) => onAuthStateChanged(auth, callback),
-            
-            // Firestore functions
-            getDocument: (collectionName, docId) => getDoc(doc(firestore, collectionName, docId)),
-            setDocument: (collectionName, docId, data) => setDoc(doc(firestore, collectionName, docId), data),
-            updateDocument: (collectionName, docId, data) => updateDoc(doc(firestore, collectionName, docId), data),
-            addDocument: (collectionName, data) => addDoc(collection(firestore, collectionName), data),
-            getCollection: async (collectionName, constraints = []) => {
-                const q = query(collection(firestore, collectionName), ...constraints);
-                const snapshot = await getDocs(q);
-                return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            },
-            serverTimestamp: () => serverTimestamp(),
-            
-            // Realtime Database functions
-            setData: (path, data) => set(ref(database, path), data),
-            getData: (path) => get(ref(database, path)),
-            onValueChange: (path, callback) => onValue(ref(database, path), callback),
-            removeData: (path) => remove(ref(database, path)),
-            updateData: (path, data) => update(ref(database, path), data),
-            
-            // Query constraints
-            where: where,
-            orderBy: orderBy,
-            limit: limit
-        };
-        
-        // Signal that Firebase is loaded
-        window.firebaseLoaded = true;
-        document.dispatchEvent(new Event('firebaseLoaded'));
-    </script>
+  // Initialize Firebase with compat version (easier to use)
+  firebase.initializeApp(firebaseConfig);
+  
+  // Expose Firebase services globally
+  window.firebaseAuth = firebase.auth();
+  window.firebaseDb = firebase.firestore();
+  window.firebaseRtdb = firebase.database();
+  window.firebase = firebase; // Make the entire firebase object available
+  
+  // Signal that Firebase is loaded
+  window.firebaseLoaded = true;
+  document.dispatchEvent(new Event('firebaseLoaded'));
+</script>
     
     <!-- Game Scripts -->
     <script src="js/config.js"></script>

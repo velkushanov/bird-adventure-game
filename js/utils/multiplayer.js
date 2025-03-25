@@ -28,7 +28,13 @@ function ensureFirebaseLoaded(callback) {
  */
 function createMultiplayerRoom() {
     return new Promise((resolve, reject) => {
-        ensureFirebaseLoaded(() => {
+        if (!window.firebase) {
+            console.error("Firebase not initialized!");
+            reject(new Error("Firebase not initialized"));
+            return;
+        }
+
+        try {
             if (!isAuthenticated()) {
                 reject(new Error('Must be logged in to create a multiplayer room'));
                 return;
@@ -57,19 +63,22 @@ function createMultiplayerRoom() {
             
             // Create a new room with a unique ID
             const roomId = 'room_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
-            window.firebaseFunctions.setData(`rooms/${roomId}`, roomData)
+            
+            console.log("Creating room:", roomId, roomData);
+            window.firebase.database().ref(`rooms/${roomId}`).set(roomData)
                 .then(() => {
                     currentRoom = roomId;
-                    
-                    // We need server-side logic for auto-delete on disconnect
-                    // For now, just resolve with the room ID
+                    console.log("Room created successfully:", roomId);
                     resolve(currentRoom);
                 })
                 .catch(error => {
                     console.error('Error creating room:', error);
                     reject(error);
                 });
-        });
+        } catch (err) {
+            console.error("Exception creating room:", err);
+            reject(err);
+        }
     });
 }
 

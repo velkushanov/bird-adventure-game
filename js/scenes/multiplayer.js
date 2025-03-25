@@ -72,34 +72,31 @@ class MultiplayerScene extends Phaser.Scene {
     /**
      * Check connection to Firebase
      */
+// Find the checkFirebaseConnection() method and replace it with this:
     checkFirebaseConnection() {
         // Update debug text
         this.debugText.setText('Checking Firebase connection...');
         
         // Set a timeout for connectivity check
         setTimeout(() => {
-            if (window.firebaseLoaded) {
+            if (window.firebase) {
                 this.debugText.setText('Firebase loaded. Checking connection...');
                 
                 try {
-                    // Use window.databaseRef instead of ref
-                    const connectedRef = window.firebaseRtdb ? window.databaseRef(window.firebaseRtdb, '.info/connected') : null;
+                    // Use the compat version which is much simpler
+                    const connectedRef = window.firebase.database().ref('.info/connected');
                     
-                    if (connectedRef) {
-                        window.firebaseFunctions.onValueChange('.info/connected', (snap) => {
-                            if (snap.val() === true) {
-                                this.debugText.setText('Connected to Firebase ✓');
-                            } else {
-                                this.debugText.setText('WARNING: Not connected to Firebase ✗');
-                                this.showConnectionError();
-                            }
-                        });
-                    } else {
-                        this.debugText.setText('WARNING: Cannot access realtime database ✗');
-                        this.showConnectionError();
-                    }
+                    connectedRef.on('value', (snap) => {
+                        if (snap.val() === true) {
+                            this.debugText.setText('Connected to Firebase ✓');
+                        } else {
+                            this.debugText.setText('WARNING: Not connected to Firebase ✗');
+                            this.showConnectionError();
+                        }
+                    });
                 } catch (err) {
                     this.debugText.setText(`Firebase error: ${err.message}`);
+                    console.error("Firebase connection error:", err);
                     this.showConnectionError();
                 }
             } else {
@@ -107,8 +104,7 @@ class MultiplayerScene extends Phaser.Scene {
                 this.showConnectionError();
             }
         }, 3000);
-    }
-    
+    }    
     /**
      * Show connection error message
      */

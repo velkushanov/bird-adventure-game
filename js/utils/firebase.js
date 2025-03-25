@@ -22,11 +22,11 @@ function ensureFirebaseLoaded(callback) {
  * Initialize Firebase with configuration
  */
 function initializeFirebase() {
-    ensureFirebaseLoaded(() => {
-        console.log('Firebase initialized');
+    if (window.firebase) {
+        console.log('Firebase compat version initialized');
         
         // Set up auth state listener
-        window.firebaseFunctions.onAuthStateChanged((user) => {
+        window.firebase.auth().onAuthStateChanged(user => {
             if (user) {
                 // User is signed in
                 currentUser = {
@@ -37,11 +37,11 @@ function initializeFirebase() {
                 };
                 
                 // Create or update user document in Firestore
-                window.firebaseFunctions.setDocument('users', user.uid, {
+                window.firebase.firestore().collection('users').doc(user.uid).set({
                     displayName: user.displayName || 'Player',
                     email: user.email,
                     photoURL: user.photoURL,
-                    lastLogin: window.firebaseFunctions.serverTimestamp()
+                    lastLogin: firebase.firestore.FieldValue.serverTimestamp()
                 }, { merge: true });
                 
                 console.log('User signed in:', currentUser.displayName);
@@ -51,7 +51,9 @@ function initializeFirebase() {
                 console.log('User signed out');
             }
         });
-    });
+    } else {
+        console.error("Firebase not available - check script loading");
+    }
 }
 
 /**
