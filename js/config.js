@@ -45,13 +45,13 @@ const CONFIG = {
     
     // Firebase config - Replace with your Firebase project details
     FIREBASE: {
-        apiKey: "YOUR_API_KEY",
-        authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-        projectId: "YOUR_PROJECT_ID",
-        storageBucket: "YOUR_PROJECT_ID.appspot.com",
-        messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-        appId: "YOUR_APP_ID",
-        databaseURL: "https://YOUR_PROJECT_ID.firebaseio.com"
+        apiKey: "AIzaSyC62BZ85vPN-e-WF904nz3A-xfzMM9YcJY",
+        authDomain: "mario-bird-game.firebaseapp.com",
+        projectId: "mario-bird-game",
+        storageBucket: "mario-bird-game.firebasestorage.app",
+        messagingSenderId: "914113005062",
+        appId: "1:914113005062:web:1a81b1edb4b8159e826587",
+        databaseURL: "https://mario-bird-game-default-rtdb.europe-west1.firebasedatabase.app"
     },
     
     // Character options
