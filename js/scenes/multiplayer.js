@@ -82,8 +82,8 @@ class MultiplayerScene extends Phaser.Scene {
                 this.debugText.setText('Firebase loaded. Checking connection...');
                 
                 try {
-                    // Try to access Firebase
-                    const connectedRef = window.firebaseRtdb ? ref(window.firebaseRtdb, '.info/connected') : null;
+                    // Use window.databaseRef instead of ref
+                    const connectedRef = window.firebaseRtdb ? window.databaseRef(window.firebaseRtdb, '.info/connected') : null;
                     
                     if (connectedRef) {
                         window.firebaseFunctions.onValueChange('.info/connected', (snap) => {
@@ -106,7 +106,7 @@ class MultiplayerScene extends Phaser.Scene {
                 this.debugText.setText('Firebase not loaded after timeout ✗');
                 this.showConnectionError();
             }
-        }, 3000); // Give Firebase 3 seconds to connect
+        }, 3000);
     }
     
     /**
