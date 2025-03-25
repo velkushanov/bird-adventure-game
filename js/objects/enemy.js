@@ -190,6 +190,76 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
             console.error("Error in Enemy.applyMovementPattern:", error);
         }
     }
+
+        /**
+     * Shoot at the player
+     * @returns {Phaser.GameObjects.Sprite} The created projectile
+     */
+    shootAtPlayer() {
+        if (this.destroyed || !this.active || !this.scene) return null;
+        
+        try {
+            // Don't shoot if enemy is off-screen
+            if (this.x < 0 || this.x > CONFIG.GAME_WIDTH || 
+                this.y < 0 || this.y > CONFIG.GAME_HEIGHT) {
+                return null;
+            }
+            
+            // Get target (the bird)
+            const target = this.scene.bird;
+            if (!target || !target.active) return null;
+            
+            // Create enemy projectile
+            const projectile = this.scene.enemyProjectiles.create(
+                this.x - 10, // Shoot from left side of enemy
+                this.y,
+                'fireball' // Reuse fireball texture
+            );
+            
+            if (!projectile) return null;
+            
+            // Configure projectile physics
+            projectile.body.allowGravity = false;
+            
+            // Add visual distinction - tint it red
+            projectile.setTint(0xff0000);
+            
+            // Calculate angle to player
+            const angle = Phaser.Math.Angle.Between(
+                this.x, this.y,
+                target.x, target.y
+            );
+            
+            // Set velocity based on angle
+            const speed = 300;
+            projectile.setVelocity(
+                Math.cos(angle) * speed,
+                Math.sin(angle) * speed
+            );
+            
+            // Set proper rotation
+            projectile.rotation = angle;
+            
+            // Play sound
+            this.scene.sound.play('sfx-fireball', { volume: 0.4 });
+            
+            // Add a cleanup timer
+            this.scene.time.addEvent({
+                delay: 4000,
+                callback: () => {
+                    if (projectile && projectile.active) {
+                        projectile.destroy();
+                    }
+                },
+                callbackScope: this
+            });
+            
+            return projectile;
+        } catch (error) {
+            console.error("Error in Enemy.shootAtPlayer:", error);
+            return null;
+        }
+    }
     
     /**
      * Take damage from player or projectiles

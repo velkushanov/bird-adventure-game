@@ -804,8 +804,8 @@ class GameScene extends Phaser.Scene {
     
     /**
      * Update fireballs position and behavior
-     * @param {number} delta - Delta time since last frame
-     * FIX: Added error handling and active checks
+     * @param {number} delta - Time since last update
+     * FIX: Added better off-screen detection for all sides
      */
     updateFireballs(delta) {
         try {
@@ -815,8 +815,11 @@ class GameScene extends Phaser.Scene {
                 // Skip if already marked for destruction or inactive
                 if (!fireball || !fireball.active || fireball.destroyed) return;
                 
-                // Check if fireball is off screen
-                if (fireball.x > CONFIG.GAME_WIDTH + 50) {
+                // Check if fireball is off screen (check all sides)
+                if (fireball.x > CONFIG.GAME_WIDTH + 50 || 
+                    fireball.x < -50 || 
+                    fireball.y < -50 || 
+                    fireball.y > CONFIG.GAME_HEIGHT + 50) {
                     fireball.destroyed = true;
                     fireball.destroy();
                 }
@@ -825,371 +828,376 @@ class GameScene extends Phaser.Scene {
             console.error('Error in updateFireballs:', error);
         }
     }
-    
+
     /**
-     * Generate obstacle pairs (pipes)
-     * FIX: Added error handling
+     * Handle collision between fireball and obstacle
+     * @param {Phaser.GameObjects.Sprite} fireball - The fireball
+     * @param {Phaser.GameObjects.Sprite} obstacle - The obstacle
+     * FIXED: Now destroys obstacles completely
      */
-    generateObstacles() {
-        if (this.isGameOver) return;
+    hitObstacleWithFireball(fireball, obstacle) {
+        // Extra safeguards
+        if (!fireball || !obstacle || !fireball.active || !obstacle.active) return;
+        if (fireball.destroyed || obstacle.destroyed) return;
         
         try {
-            // Calculate gap size based on level (gets smaller as level increases)
-            const maxReduction = CONFIG.OBSTACLE_GAP_DECREMENT * CONFIG.MAX_LEVEL;
-            const levelReduction = Math.min(CONFIG.OBSTACLE_GAP_DECREMENT * (this.level - 1), maxReduction);
-            const gapSize = CONFIG.MIN_OBSTACLE_GAP - levelReduction;
+            // Mark fireball and obstacle as destroyed
+            fireball.destroyed = true;
+            obstacle.destroyed = true;
             
-            // Random position for the gap
-            const gapPosition = Phaser.Math.Between(100, CONFIG.GAME_HEIGHT - 100 - gapSize);
+            // Play break sound for obstacle destruction
+            this.sound.play('sfx-break', { volume: 0.6 });
             
-            // Create top obstacle
-            const topObstacle = this.obstacles.create(CONFIG.GAME_WIDTH, gapPosition - 320, 'pipe');
-            if (topObstacle && topObstacle.body) {
-                topObstacle.body.allowGravity = false;
-                topObstacle.setImmovable(true);
-                topObstacle.scored = false;
-            }
+            // Create explosion effect at obstacle position
+            this.addDestructionEffect(obstacle.x, obstacle.y);
             
-            // Create bottom obstacle
-            const bottomObstacle = this.obstacles.create(CONFIG.GAME_WIDTH, gapPosition + gapSize, 'pipe');
-            if (bottomObstacle && bottomObstacle.body) {
-                bottomObstacle.body.allowGravity = false;
-                bottomObstacle.setImmovable(true);
-                bottomObstacle.flipY = true;
-                bottomObstacle.scored = false;
-            }
+            // Add points for destroying obstacle
+            this.increaseScore(CONFIG.BIG_OBSTACLE_POINTS);
+            
+            // Destroy both objects
+            fireball.destroy();
+            obstacle.destroy();
         } catch (error) {
-            console.error('Error in generateObstacles:', error);
+            console.error("Error in hitObstacleWithFireball:", error);
+            
+            // Attempt cleanup even if error occurred
+            if (fireball && fireball.active) fireball.destroy();
+            if (obstacle && obstacle.active) obstacle.destroy();
         }
     }
-    
+
     /**
-     * Generate enemy turtles
-     * FIX: Added error handling
+     * Handle collision between bird and obstacle
+     * @param {Bird} bird - The player bird
+     * @param {Phaser.GameObjects.Sprite} obstacle - The obstacle
+     * FIXED: Big bird now destroys obstacles
      */
-    generateEnemies() {
-        if (this.isGameOver) return;
+    hitObstacle(bird, obstacle) {
+        // Don't process if game is already over or objects don't exist
+        if (this.isGameOver || !bird || !bird.active || !obstacle || !obstacle.active) return;
         
         try {
-            const y = Phaser.Math.Between(100, CONFIG.GAME_HEIGHT - 100);
-            const turtle = this.enemies.create(CONFIG.GAME_WIDTH, y, 'turtle');
-            
-            if (!turtle) return;
-            
-            // Setup enemy properties
-            if (turtle.body) {
-                turtle.body.allowGravity = false;
-            }
-            turtle.startY = y;
-            
-            // 50% chance for each movement pattern
-            turtle.movementPattern = Phaser.Math.RND.pick(['sine', 'chase']);
-            
-            // Add animations if they don't exist yet
-            if (!this.anims.exists('turtle-walk')) {
-                this.anims.create({
-                    key: 'turtle-walk',
-                    frames: this.anims.generateFrameNumbers('turtle', { start: 0, end: 1 }),
-                    frameRate: 5,
-                    repeat: -1
-                });
+            // Check if bird is invulnerable from star powerup
+            if (bird.isInvulnerable) {
+                console.log("Bird is invulnerable - destroying obstacle");
+                
+                // Destroy the obstacle
+                this.addDestructionEffect(obstacle.x, obstacle.y);
+                this.sound.play('sfx-break', { volume: 0.6 });
+                this.increaseScore(CONFIG.BIG_OBSTACLE_POINTS);
+                obstacle.destroy();
+                return;
             }
             
-            turtle.play('turtle-walk');
+            // Check if bird is big - it can now destroy all obstacles
+            if (this.isBig) {
+                console.log("Big bird destroyed obstacle");
+                
+                // Destroy the obstacle completely
+                this.addDestructionEffect(obstacle.x, obstacle.y);
+                this.sound.play('sfx-break', { volume: 0.6 });
+                this.increaseScore(CONFIG.BIG_OBSTACLE_POINTS);
+                obstacle.destroy();
+                return;
+            }
+            
+            console.log("Bird hit obstacle - game over");
+            
+            // Bird died - game over
+            if (bird.die) {
+                bird.die();
+            }
+            
+            this.gameOver();
         } catch (error) {
-            console.error('Error in generateEnemies:', error);
+            console.error('Error in hitObstacle:', error);
         }
     }
-    
+
     /**
-     * Generate power-ups
-     * FIX: Added error handling
+     * Create game object groups
+     * FIXED: Added enemy projectiles group
      */
-    generatePowerUps() {
-        if (this.isGameOver) return;
-        
+    createGroups() {
         try {
-            // Random y position
-            const y = Phaser.Math.Between(100, CONFIG.GAME_HEIGHT - 100);
+            this.obstacles = this.physics.add.group();
+            this.enemies = this.physics.add.group();
+            this.powerUps = this.physics.add.group();
             
-            // Randomly choose power-up type
-            const powerUpTypes = ['mushroom', 'flower', 'coin', 'star'];
-            const powerUpType = Phaser.Math.RND.pick(powerUpTypes);
-            const powerUp = this.powerUps.create(CONFIG.GAME_WIDTH, y, powerUpType);
-            
-            if (!powerUp) return;
-            
-            // Setup power-up properties
-            if (powerUp.body) {
-                powerUp.body.allowGravity = false;
-            }
-            powerUp.type = powerUpType;
-            
-            // Add pulsing or rotation animation
-            if (powerUpType === 'mushroom') {
-                this.tweens.add({
-                    targets: powerUp,
-                    scale: { from: 0.9, to: 1.1 },
-                    duration: 500,
-                    yoyo: true,
-                    repeat: -1
-                });
-            } else if (powerUpType === 'flower') {
-                this.tweens.add({
-                    targets: powerUp,
-                    angle: { from: -5, to: 5 },
-                    duration: 500,
-                    yoyo: true,
-                    repeat: -1
-                });
-            } else if (powerUpType === 'coin') {
-                this.tweens.add({
-                    targets: powerUp,
-                    angle: { from: 0, to: 360 },
-                    duration: 1000,
-                    repeat: -1
-                });
-            } else if (powerUpType === 'star') {
-                this.tweens.add({
-                    targets: powerUp,
-                    angle: { from: 0, to: 360 },
-                    scale: { from: 0.8, to: 1.2 },
-                    duration: 1000,
-                    yoyo: true,
-                    repeat: -1
-                });
-            }
-        } catch (error) {
-            console.error('Error in generatePowerUps:', error);
-        }
-    }
-    
-    /**
-     * Shoot a fireball
-     * @returns {Phaser.GameObjects.Sprite} The created fireball or null if can't shoot
-     * FIX: Added error handling
-     */
-    shootFireball() {
-        if (this.isGameOver || !this.bird || !this.bird.active) return null;
-        
-        try {
-            return this.bird.shootFireball();
-        } catch (error) {
-            console.error('Error in shootFireball:', error);
-            return null;
-        }
-    }
-    
-    /**
-     * Create destruction particle effect
-     * @param {number} x - X position
-     * @param {number} y - Y position
-     * FIX: Added error handling
-     */
-    addDestructionEffect(x, y) {
-        try {
-            // Create particle emitter for destruction effect
-            const particles = this.add.particles('particle');
-            
-            const emitter = particles.createEmitter({
-                x: x,
-                y: y,
-                speed: { min: 50, max: 150 },
-                angle: { min: 0, max: 360 },
-                scale: { start: 0.5, end: 0 },
-                lifespan: 500,
-                quantity: 20
+            // Create fireball group with physics
+            this.fireballs = this.physics.add.group({
+                allowGravity: false,
+                immovable: false
             });
             
-            // Stop emitter after a single burst
-            this.time.delayedCall(100, () => {
-                if (emitter.active) {
-                    emitter.stop();
-                    
-                    // Remove particles after they fade out
-                    this.time.delayedCall(500, () => {
-                        if (particles.active) {
-                            particles.destroy();
-                        }
-                    });
+            // Create enemy projectiles group
+            this.enemyProjectiles = this.physics.add.group({
+                allowGravity: false,
+                immovable: false
+            });
+            
+            // Create a group for other players (multiplayer)
+            this.multiplayer = this.add.group();
+        } catch (error) {
+            console.error('Error in createGroups:', error);
+        }
+    }
+
+    /**
+     * Setup collision detection between game objects
+     * FIXED: Added enemy projectile collision
+     */
+    setupCollisions() {
+        try {
+            // Bird collisions
+            this.physics.add.collider(this.bird, this.obstacles, this.hitObstacle, null, this);
+            this.physics.add.collider(this.bird, this.enemies, this.hitEnemy, null, this);
+            this.physics.add.overlap(this.bird, this.powerUps, this.collectPowerUp, null, this);
+            
+            // Fireball collisions - use overlap instead of collider for more reliable detection
+            this.physics.add.overlap(this.fireballs, this.enemies, this.hitEnemyWithFireball, null, this);
+            this.physics.add.overlap(this.fireballs, this.obstacles, this.hitObstacleWithFireball, null, this);
+            
+            // Enemy projectile collisions
+            this.physics.add.overlap(this.enemyProjectiles, this.bird, this.hitBirdWithProjectile, null, this);
+        } catch (error) {
+            console.error('Error in setupCollisions:', error);
+        }
+    }
+
+    /**
+     * Handle collision between bird and enemy projectile
+     * @param {Bird} bird - The player bird
+     * @param {Phaser.GameObjects.Sprite} projectile - Enemy projectile
+     */
+    hitBirdWithProjectile(bird, projectile) {
+        if (!bird || !projectile || !bird.active || !projectile.active) return;
+        if (this.isGameOver) return;
+        
+        try {
+            // Destroy the projectile
+            projectile.destroy();
+            
+            // Check if bird is invulnerable
+            if (bird.isInvulnerable) {
+                console.log("Bird is invulnerable - projectile hit ignored");
+                return;
+            }
+            
+            // Check if bird is big - takes hit without dying
+            if (this.isBig) {
+                console.log("Big bird hit by projectile - becoming small");
+                this.sound.play('sfx-hit', { volume: 0.6 });
+                
+                // Lose mushroom powerup
+                if (bird.isBig) {
+                    bird.clearPowerUps();
+                    this.isBig = false;
+                    if (this.bigIndicator) this.bigIndicator.setVisible(false);
+                }
+                return;
+            }
+            
+            console.log("Bird hit by projectile - game over");
+            
+            // Bird died - game over
+            if (bird.die) {
+                bird.die();
+            }
+            
+            this.gameOver();
+        } catch (error) {
+            console.error('Error in hitBirdWithProjectile:', error);
+        }
+    }
+
+    /**
+     * Update method to handle enemy projectiles
+     * @param {number} delta - Time since last update
+     */
+    updateEnemyProjectiles(delta) {
+        try {
+            if (!this.enemyProjectiles) return;
+            
+            this.enemyProjectiles.getChildren().forEach(projectile => {
+                // Skip if inactive
+                if (!projectile || !projectile.active) return;
+                
+                // Check if projectile is off screen
+                if (projectile.x < -50 || projectile.x > CONFIG.GAME_WIDTH + 50 ||
+                    projectile.y < -50 || projectile.y > CONFIG.GAME_HEIGHT + 50) {
+                    projectile.destroy();
                 }
             });
         } catch (error) {
-            console.error('Error in addDestructionEffect:', error);
+            console.error('Error in updateEnemyProjectiles:', error);
         }
     }
-    
+
     /**
-     * Create impact effect
-     * @param {number} x - X position
-     * @param {number} y - Y position
-     * FIX: Added error handling
+     * Main update function called every frame
+     * @param {number} time - The current time
+     * @param {number} delta - The delta time in ms since the last frame
+     * FIXED: Added enemy projectiles update
      */
-    addImpactEffect(x, y) {
+    update(time, delta) {
+        if (this.isGameOver) return;
+        
         try {
-            // Create impact sprite
-            const impact = this.add.sprite(x, y, 'impact');
+            // Update scrolling background
+            this.updateBackground(delta);
             
-            // Make sure the impact animation exists
-            if (!this.anims.exists('impact-anim')) {
-                this.anims.create({
-                    key: 'impact-anim',
-                    frames: this.anims.generateFrameNumbers('impact', { start: 0, end: 5 }),
-                    frameRate: 20,
-                    repeat: 0
-                });
-            }
-            
-            // Play the animation
-            impact.play('impact-anim');
-            
-            // Set proper depth
-            impact.setDepth(10);
-            
-            // Use Phaser's timer to ensure removal
-            this.time.addEvent({
-                delay: 300, // Animation duration
-                callback: () => {
-                    if (impact && impact.active) {
-                        impact.destroy();
-                    }
-                }
-            });
-        } catch (error) {
-            console.error("Error creating impact effect:", error);
-        }
-    }
-    
-    /**
-     * Increase player score
-     * @param {number} points - Points to add
-     * FIX: Added error handling
-     */
-    increaseScore(points) {
-        try {
-            // Calculate points based on level
-            const levelMultiplier = Math.max(1, this.level);
-            const pointsToAdd = points * levelMultiplier;
-            
-            // Update score
-            this.score += pointsToAdd;
-            
-            // Update score text safely
-            if (this.scoreText && this.scoreText.active) {
-                // Update score text with animation for visibility
-                this.tweens.add({
-                    targets: this.scoreText,
-                    scaleX: 1.2,
-                    scaleY: 1.2,
-                    duration: 100,
-                    yoyo: true,
-                    onComplete: () => {
-                        if (this.scoreText && this.scoreText.active) {
-                            this.scoreText.setText(`Score: ${this.score}`);
-                        }
-                    }
-                });
-            }
-            
-            // Create floating score text if bird exists
+            // Update bird
             if (this.bird && this.bird.active) {
-                this.createFloatingText(`+${pointsToAdd}`, this.bird.x, this.bird.y - 30);
+                this.bird.update(time, delta);
+            }
+            
+            // Update game objects
+            this.updateObstacles(delta);
+            this.updateEnemies(delta);
+            this.updatePowerUps(delta);
+            this.updateFireballs(delta);
+            this.updateEnemyProjectiles(delta); // Add this line to handle enemy projectiles
+            
+            // Auto-shoot if flower power is active
+            if (this.isShooting && time > this.lastFireTime + CONFIG.FIREBALL_RATE) {
+                this.shootFireball();
+                this.lastFireTime = time;
             }
         } catch (error) {
-            console.error('Error in increaseScore:', error);
+            console.error('Error in update:', error);
         }
     }
-    
+
     /**
-     * Create floating score text
-     * @param {string} text - Text to display
-     * @param {number} x - X position
-     * @param {number} y - Y position
-     * FIX: Added error handling
+     * Trigger end of level enemy shooting
      */
-    createFloatingText(text, x, y) {
+    triggerEnemyShooting() {
+        if (this.isGameOver) return;
+        
         try {
-            const floatingText = this.add.text(x, y, text, {
-                fontFamily: 'Arial',
-                fontSize: '20px',
-                color: '#FFFF00',
-                stroke: '#000000',
-                strokeThickness: 3
-            }).setOrigin(0.5);
+            console.log("Triggering end of level enemy shooting");
             
-            // Animate the text floating up and fading out
+            // Show warning message
+            const warningText = this.add.text(
+                CONFIG.GAME_WIDTH / 2,
+                100,
+                "ENEMY ATTACK!",
+                {
+                    fontFamily: 'Arial',
+                    fontSize: '32px',
+                    color: '#ff0000',
+                    stroke: '#000000',
+                    strokeThickness: 4
+                }
+            ).setOrigin(0.5);
+            
+            // Add warning flash effect
             this.tweens.add({
-                targets: floatingText,
-                y: y - 50,
-                alpha: 0,
-                duration: 1000,
-                ease: 'Power1',
+                targets: warningText,
+                alpha: { from: 1, to: 0 },
+                duration: 500,
+                yoyo: true,
+                repeat: 3,
                 onComplete: () => {
-                    if (floatingText && floatingText.active) {
-                        floatingText.destroy();
-                    }
+                    warningText.destroy();
                 }
             });
+            
+            // Play warning sound
+            this.sound.play('sfx-levelup', { volume: 0.7 }); // Reuse level up sound
+            
+            // Make all on-screen enemies shoot at intervals
+            const enemies = this.enemies.getChildren();
+            if (enemies.length > 0) {
+                // Create a timer to make enemies shoot
+                this.enemyShootingTimer = this.time.addEvent({
+                    delay: 1000, // 1 second between shots
+                    callback: () => {
+                        // Get all active enemies
+                        const activeEnemies = this.enemies.getChildren().filter(e => e.active);
+                        
+                        // Have random enemies shoot
+                        if (activeEnemies.length > 0) {
+                            const randomIndex = Phaser.Math.Between(0, activeEnemies.length - 1);
+                            const shooter = activeEnemies[randomIndex];
+                            
+                            if (shooter && shooter.active && typeof shooter.shootAtPlayer === 'function') {
+                                shooter.shootAtPlayer();
+                            }
+                        }
+                    },
+                    repeat: 5 // 6 total shots (1 immediate + 5 repeats)
+                });
+            }
         } catch (error) {
-            console.error('Error in createFloatingText:', error);
+            console.error('Error in triggerEnemyShooting:', error);
         }
     }
-    
+
     /**
      * Increase level
-     * FIX: Added error handling
+     * FIXED: Added enemy shooting at end of level
      */
     increaseLevel() {
         if (this.isGameOver) return;
         
         try {
-            // Increment level
-            this.level++;
+            // Trigger enemy shooting at end of current level
+            this.triggerEnemyShooting();
             
-            // Update level text with animation
-            if (this.levelText && this.levelText.active) {
-                this.tweens.add({
-                    targets: this.levelText,
-                    scaleX: 1.2,
-                    scaleY: 1.2,
-                    duration: 100,
-                    yoyo: true,
-                    onComplete: () => {
-                        if (this.levelText && this.levelText.active) {
-                            this.levelText.setText(`Level: ${this.level}`);
+            // Wait a bit before changing level
+            this.time.delayedCall(3000, () => {
+                if (this.isGameOver) return;
+                
+                // Increment level
+                this.level++;
+                
+                // Update level text with animation
+                if (this.levelText && this.levelText.active) {
+                    this.tweens.add({
+                        targets: this.levelText,
+                        scaleX: 1.2,
+                        scaleY: 1.2,
+                        duration: 100,
+                        yoyo: true,
+                        onComplete: () => {
+                            if (this.levelText && this.levelText.active) {
+                                this.levelText.setText(`Level: ${this.level}`);
+                            }
                         }
-                    }
-                });
-            }
-            
-            // Increase game speed (up to a maximum)
-            if (this.level <= CONFIG.MAX_LEVEL) {
-                this.gameSpeed += CONFIG.LEVEL_SPEED_INCREASE;
-            }
-            
-            // Change background if needed
-            const bgIndex = (this.level - 1) % CONFIG.BACKGROUNDS.length;
-            const newBgConfig = CONFIG.BACKGROUNDS[bgIndex];
-            
-            if (newBgConfig.id !== this.currentBackground) {
-                // Fade transition to new background
-                this.cameras.main.fade(500, 0, 0, 0, false, (camera, progress) => {
-                    if (progress === 1 && this.bg && this.bg.active) {
-                        // Change background
-                        this.bg.setTexture(newBgConfig.texture);
-                        this.currentBackground = newBgConfig.id;
-                        
-                        // Fade back in
-                        this.cameras.main.fadeIn(500);
-                    }
-                });
-            }
-            
-            // Play level up sound
-            this.sound.play('sfx-levelup', { volume: 0.7 });
-            
-            // Show level up text
-            this.createLevelUpText();
+                    });
+                }
+                
+                // Increase game speed (up to a maximum)
+                if (this.level <= CONFIG.MAX_LEVEL) {
+                    this.gameSpeed += CONFIG.LEVEL_SPEED_INCREASE;
+                }
+                
+                // Change background if needed
+                const bgIndex = (this.level - 1) % CONFIG.BACKGROUNDS.length;
+                const newBgConfig = CONFIG.BACKGROUNDS[bgIndex];
+                
+                if (newBgConfig.id !== this.currentBackground) {
+                    // Fade transition to new background
+                    this.cameras.main.fade(500, 0, 0, 0, false, (camera, progress) => {
+                        if (progress === 1 && this.bg && this.bg.active) {
+                            // Change background
+                            this.bg.setTexture(newBgConfig.texture);
+                            this.currentBackground = newBgConfig.id;
+                            
+                            // Fade back in
+                            this.cameras.main.fadeIn(500);
+                        }
+                    });
+                }
+                
+                // Play level up sound
+                this.sound.play('sfx-levelup', { volume: 0.7 });
+                
+                // Show level up text
+                this.createLevelUpText();
+            });
         } catch (error) {
             console.error('Error in increaseLevel:', error);
         }
