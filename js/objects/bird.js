@@ -488,7 +488,7 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
     shootFireball() {
         if (!this.isShooting || this.isDead) return null;
         
-        // Implement cooldown to prevent too many fireballs (fixes crash)
+        // Implement cooldown to prevent too many fireballs
         const currentTime = this.scene.time.now;
         if (currentTime - this.lastFireballTime < CONFIG.FIREBALL_RATE) {
             return null;
@@ -497,38 +497,44 @@ class Bird extends Phaser.Physics.Arcade.Sprite {
         // Update last fireball time
         this.lastFireballTime = currentTime;
         
+        // Get the fireballs group from the scene (make sure it exists)
+        const fireballsGroup = this.scene.fireballs;
+        if (!fireballsGroup) {
+            console.error("Fireballs group not found in scene");
+            return null;
+        }
+        
         // Create fireball with proper physics setup
-        const fireball = this.scene.physics.add.sprite(
+        const fireball = fireballsGroup.create(
             this.x + this.width / 2,
             this.y,
             'fireball'
         );
         
-        // Configure fireball physics (improved setup)
+        // Configure fireball physics
         fireball.body.allowGravity = false;
         fireball.setVelocityX(CONFIG.FIREBALL_SPEED);
         
         // Set a proper collision size
         fireball.body.setSize(fireball.width * 0.8, fireball.height * 0.8);
         
+        // Mark fireball as managed to prevent double destruction
+        fireball.managed = true;
+        
         // Add a lifespan to ensure fireballs don't stay forever
         this.scene.time.delayedCall(5000, () => {
-            if (fireball && fireball.active) {
+            if (fireball && fireball.active && !fireball.destroyed) {
+                fireball.destroyed = true;
                 fireball.destroy();
             }
         });
         
-        // Add rotation animation via tweens
+        // Add rotation animation via tweens (without onComplete to avoid race conditions)
         this.scene.tweens.add({
             targets: fireball,
             angle: 360,
             duration: 1000,
-            repeat: -1,
-            onComplete: function() {
-                if (fireball && fireball.active) {
-                    fireball.destroy();
-                }
-            }
+            repeat: -1
         });
         
         // Play sound

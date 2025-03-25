@@ -512,16 +512,59 @@ function startGame(characterId) {
  */
 function restartGame() {
     try {
-        // Get the current scene
-        const currentScene = gameInstance.scene.getScenes(true)[0];
+        // Make sure the modal is hidden first
+        const gameoverModal = document.getElementById('gameover-modal');
+        if (gameoverModal) {
+            gameoverModal.style.display = 'none';
+        }
         
-        // Go to character selection
-        currentScene.scene.start('CharacterSelectScene');
+        // Make sure gameInstance exists
+        if (!gameInstance || !gameInstance.scene) {
+            console.error('Game instance not found when restarting game');
+            location.reload(); // Force page reload as fallback
+            return;
+        }
+        
+        // Clean up all active scenes first
+        cleanupGameScenes();
+        
+        // Find the current active scene
+        const activeScenes = gameInstance.scene.getScenes(true);
+        let currentScene = null;
+        
+        // Look for GameScene specifically
+        for (let i = 0; i < activeScenes.length; i++) {
+            if (activeScenes[i].scene.key === 'GameScene') {
+                currentScene = activeScenes[i];
+                break;
+            }
+        }
+        
+        // If GameScene found, properly shut it down
+        if (currentScene) {
+            console.log('Shutting down GameScene before restart');
+            
+            // Use our safer transition method
+            transitionToScene('GameScene', 'CharacterSelectScene', {}, false);
+        } else {
+            // If no GameScene, use any active scene
+            currentScene = activeScenes[0];
+            
+            if (currentScene) {
+                console.log('Starting CharacterSelectScene from', currentScene.scene.key);
+                currentScene.scene.start('CharacterSelectScene');
+            } else {
+                // Last resort - reload the page
+                console.error('No active scenes found, reloading page');
+                location.reload();
+            }
+        }
     } catch (error) {
-        console.error('Error restarting game:', error);
+        console.error('Critical error restarting game:', error);
         
-        // Fallback - show character modal directly
-        showCharacterModal();
+        // Reload the page as a last resort
+        alert('An error occurred while restarting the game. The page will reload now.');
+        location.reload();
     }
 }
 
@@ -646,18 +689,46 @@ function cleanupGameScenes() {
         gameInstance.tweens.killAll();
     }
     
-    // Make sure no invisible blocking elements remain
+    // Stop all timers in all scenes
     const activeScenes = gameInstance.scene.getScenes(true);
     activeScenes.forEach(scene => {
+        // Remove all timers
+        if (scene.time) {
+            scene.time.removeAllEvents();
+        }
+        
+        // Stop all animations
+        if (scene.anims) {
+            scene.anims.pauseAll();
+        }
+        
+        // Stop all sounds
+        if (scene.sound) {
+            scene.sound.stopAll();
+        }
+        
         // Remove any full-screen rectangles that might block input
-        scene.children.getAll().forEach(child => {
-            if (child instanceof Phaser.GameObjects.Rectangle && 
-                child.width >= CONFIG.GAME_WIDTH && 
-                child.height >= CONFIG.GAME_HEIGHT) {
-                child.destroy();
-            }
-        });
+        if (scene.children) {
+            scene.children.getAll().forEach(child => {
+                if (child instanceof Phaser.GameObjects.Rectangle && 
+                    child.width >= CONFIG.GAME_WIDTH && 
+                    child.height >= CONFIG.GAME_HEIGHT) {
+                    child.destroy();
+                }
+            });
+        }
+        
+        // Call scene-specific cleanup if it exists
+        if (typeof scene.cleanup === 'function') {
+            scene.cleanup();
+        }
     });
+    
+    // Make sure physics is working
+    if (gameInstance.physics && gameInstance.physics.world) {
+        gameInstance.physics.resume();
+        gameInstance.physics.world.resume();
+    }
 }
 
 // Call this function when switching major scenes

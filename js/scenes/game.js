@@ -565,16 +565,16 @@ class GameScene extends Phaser.Scene {
      * @param {number} delta - Delta time since last frame
      */
     updateFireballs(delta) {
-        // Move fireballs forward
-        const fireballSpeed = CONFIG.FIREBALL_SPEED * delta / 1000;
+        // Move fireballs forward - only update if not destroyed
         this.fireballs.getChildren().forEach(fireball => {
-            fireball.x += fireballSpeed;
+            if (fireball.destroyed) return;
             
             // Rotate the fireball for effect
             fireball.angle += 5;
             
             // Remove if off screen
             if (fireball.x > CONFIG.GAME_WIDTH) {
+                fireball.destroyed = true;
                 fireball.destroy();
             }
         });
@@ -801,37 +801,11 @@ class GameScene extends Phaser.Scene {
     shootFireball() {
         if (!this.isShooting || this.isGameOver || !this.bird) return;
         
-        // Create fireball at bird's position
-        const fireball = this.fireballs.create(
-            this.bird.x + this.bird.width / 2,
-            this.bird.y,
-            'fireball'
-        );
+        // Use the bird's shootFireball method directly instead of duplicating code
+        this.bird.shootFireball();
         
-        // Setup fireball properties
-        fireball.body.allowGravity = false;
-        fireball.setVelocityX(CONFIG.FIREBALL_SPEED);
-        
-        // Set proper collision box
-        fireball.body.setSize(fireball.width * 0.8, fireball.height * 0.8);
-        
-        // Add rotation effect
-        this.tweens.add({
-            targets: fireball,
-            angle: 360,
-            duration: 1000,
-            repeat: -1
-        });
-        
-        // Add lifespan to prevent memory leaks
-        this.time.delayedCall(5000, () => {
-            if (fireball && fireball.active) {
-                fireball.destroy();
-            }
-        });
-        
-        // Play sound
-        this.sound.play('sfx-fireball', { volume: 0.5 });
+        // Update last fire time (for auto-shooting)
+        this.lastFireTime = this.time.now;
     }
     
     /**
@@ -880,6 +854,12 @@ class GameScene extends Phaser.Scene {
      * @param {Phaser.GameObjects.Sprite} enemy - The enemy hit
      */
     hitEnemyWithFireball(fireball, enemy) {
+        // Mark as destroyed to prevent double destruction
+        if (fireball.destroyed || enemy.destroyed) return;
+        
+        fireball.destroyed = true;
+        enemy.destroyed = true;
+        
         // Destroy both objects
         fireball.destroy();
         enemy.destroy();
@@ -900,6 +880,11 @@ class GameScene extends Phaser.Scene {
      * @param {Phaser.GameObjects.Sprite} obstacle - The obstacle hit
      */
     hitObstacleWithFireball(fireball, obstacle) {
+        // Mark as destroyed to prevent double destruction
+        if (fireball.destroyed) return;
+        
+        fireball.destroyed = true;
+        
         // Destroy fireball but not obstacle
         fireball.destroy();
         
@@ -1179,6 +1164,16 @@ class GameScene extends Phaser.Scene {
      * Cleanup resources when shutting down scene
      */
     shutdown() {
+        console.log('GameScene shutdown called');
+        
+        // Stop the game if it's still running
+        this.isGameOver = true;
+        
+        // Resume physics if paused
+        if (this.physics) {
+            this.physics.resume();
+        }
+        
         // Clean up multiplayer resources
         if (this.isMultiplayer) {
             stopMultiplayerSync();
@@ -1194,21 +1189,66 @@ class GameScene extends Phaser.Scene {
         if (this.obstacleTimer) this.obstacleTimer.remove();
         if (this.enemyTimer) this.enemyTimer.remove();
         if (this.powerUpTimer) this.powerUpTimer.remove();
-        
-        // Clean up power-up timers
         if (this.mushroomTimer) this.mushroomTimer.remove();
         if (this.flowerTimer) this.flowerTimer.remove();
+        
+        // Remove all pending delayed calls
+        this.time.removeAllEvents();
         
         // Kill all tweens
         this.tweens.killAll();
         
         // Remove all event listeners
         this.input.keyboard.shutdown();
+        this.input.off('pointerdown');
         
-        // Stop all sounds
+        // Clear all groups
+        if (this.obstacles) {
+            this.obstacles.clear(true, true);
+        }
+        
+        if (this.enemies) {
+            this.enemies.clear(true, true);
+        }
+        
+        if (this.powerUps) {
+            this.powerUps.clear(true, true);
+        }
+        
+        if (this.fireballs) {
+            this.fireballs.clear(true, true);
+        }
+        
+        if (this.multiplayer) {
+            this.multiplayer.clear(true, true);
+        }
+        
+        // Destroy bird properly if it exists
+        if (this.bird) {
+            if (typeof this.bird.destroy === 'function') {
+                this.bird.destroy();
+            }
+            this.bird = null;
+        }
+        
+        // Stop all sounds to prevent audio leaks
         this.sound.stopAll();
         
-        // Call parent shutdown
-        super.shutdown();
+        // Call parent shutdown - MUST BE LAST
+        try {
+            super.shutdown();
+        } catch (error) {
+            console.error('Error in parent shutdown:', error);
+        }
+    }
+    
+    /**
+     * Custom cleanup method that can be called from outside
+     */
+    cleanup() {
+        console.log('GameScene external cleanup called');
+        
+        // Just call shutdown method
+        this.shutdown();
     }
 }
