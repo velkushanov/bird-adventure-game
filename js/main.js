@@ -254,3 +254,33 @@ function viewLeaderboard() {
 function updateLoadingProgress(progress) {
     document.querySelector('.progress').style.width = Math.floor(progress * 100) + '%';
 }
+/**
+ * Global cleanup function to ensure proper scene transitions
+ */
+function cleanupGameScenes() {
+    // Stop all running tweens
+    if (window.game && window.game.tweens) {
+        window.game.tweens.killAll();
+    }
+    
+    // Make sure no invisible blocking elements remain
+    if (window.game && window.game.scene) {
+        const activeScenes = window.game.scene.getScenes(true);
+        activeScenes.forEach(scene => {
+            // Remove any full-screen rectangles that might block input
+            scene.children.getAll().forEach(child => {
+                if (child instanceof Phaser.GameObjects.Rectangle && 
+                    child.width >= CONFIG.GAME_WIDTH && 
+                    child.height >= CONFIG.GAME_HEIGHT) {
+                    child.destroy();
+                }
+            });
+        });
+    }
+}
+
+// Call this function when switching major scenes
+window.addEventListener('click', function() {
+    // This helps clear any stuck input blockers
+    setTimeout(cleanupGameScenes, 100);
+});

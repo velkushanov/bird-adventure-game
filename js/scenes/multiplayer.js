@@ -1133,10 +1133,21 @@ class MultiplayerScene extends Phaser.Scene {
             })
             .then(() => {
                 this.debugText.setText("Character selected and ready status set to true");
-                // Close character selection modal
+                // Close character selection modal - IMPORTANT FIX
                 if (this.characterSelectModal) {
+                    // Kill all tweens related to the modal
+                    this.tweens.killTweensOf(this.characterSelectModal.getAll());
                     this.characterSelectModal.destroy();
                     this.characterSelectModal = null;
+                    
+                    // Make sure modal background is also removed
+                    this.children.getAll().forEach(child => {
+                        if (child instanceof Phaser.GameObjects.Rectangle && 
+                            child.width === CONFIG.GAME_WIDTH && 
+                            child.height === CONFIG.GAME_HEIGHT) {
+                            child.destroy();
+                        }
+                    });
                 }
             })
             .catch(error => {

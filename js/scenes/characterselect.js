@@ -137,56 +137,85 @@ class CharacterSelectScene extends Phaser.Scene {
         });
     }
     
-    /**
-     * Select a character
-     * @param {string} characterId - The ID of the selected character
-     * @param {Phaser.GameObjects.Container} preview - The preview container
-     */
-    selectCharacter(characterId, preview) {
-        // Play select sound
-        this.sound.play('sfx-powerup', { volume: 0.5 });
+/**
+ * Select a character
+ * @param {string} characterId - The ID of the selected character
+ * @param {Phaser.GameObjects.Container} preview - The preview container
+ */
+selectCharacter(characterId, preview) {
+    // Play select sound
+    this.sound.play('sfx-powerup', { volume: 0.5 });
+    
+    // Update selected character
+    this.selectedCharacter = characterId;
+    
+    // Update visuals for all characters
+    this.characterPreviews.getChildren().forEach(p => {
+        // Get the background rectangle
+        const bg = p.getAt(0);
         
-        // Update selected character
-        this.selectedCharacter = characterId;
-        
-        // Update visuals for all characters
-        this.characterPreviews.getChildren().forEach(p => {
-            // Get the background rectangle
-            const bg = p.getAt(0);
+        if (p === preview) {
+            // Selected character
+            bg.setFillStyle(0x3498db, 0.7);
+            bg.setStrokeStyle(4, 0x2ecc71);
             
-            if (p === preview) {
-                // Selected character
-                bg.setFillStyle(0x3498db, 0.7);
-                bg.setStrokeStyle(4, 0x2ecc71);
-                
-                // Scale up the selected character
-                this.tweens.add({
-                    targets: p.previewBird,
-                    scaleX: 2.5,
-                    scaleY: 2.5,
-                    duration: 200,
-                    ease: 'Back.easeOut'
-                });
-            } else {
-                // Unselected characters
-                bg.setFillStyle(0x000000, 0.5);
-                bg.setStrokeStyle(2, 0xffffff);
-                
-                // Reset scale for unselected characters
-                this.tweens.add({
-                    targets: p.previewBird,
-                    scaleX: 2,
-                    scaleY: 2,
-                    duration: 200,
-                    ease: 'Back.easeOut'
-                });
-            }
-        });
-        
-        // Enable start button
-        this.startButton.setTint(0xffffff);
-        this.startText.setColor('#ffffff');
-    }
+            // Scale up the selected character
+            this.tweens.add({
+                targets: p.previewBird,
+                scaleX: 2.5,
+                scaleY: 2.5,
+                duration: 200,
+                ease: 'Back.easeOut'
+            });
+        } else {
+            // Unselected characters
+            bg.setFillStyle(0x000000, 0.5);
+            bg.setStrokeStyle(2, 0xffffff);
+            
+            // Reset scale for unselected characters
+            this.tweens.add({
+                targets: p.previewBird,
+                scaleX: 2,
+                scaleY: 2,
+                duration: 200,
+                ease: 'Back.easeOut'
+            });
+        }
+    });
+    
+    // Enable start button
+    this.startButton.setTint(0xffffff);
+    this.startText.setColor('#ffffff');
+}
+
+/**
+ * Start the game with selected character
+ */
+startGame() {
+    if (!this.selectedCharacter) return;
+    
+    // Play start sound
+    this.sound.play('sfx-levelup', { volume: 0.7 });
+    
+    // IMPORTANT: Destroy all tweens to prevent memory leaks
+    this.tweens.killAll();
+    
+    // Transition effect
+    this.cameras.main.fade(500, 0, 0, 0, false, (camera, progress) => {
+        if (progress === 1) {
+            // Stop menu music
+            this.sound.stopByKey('music-menu');
+            
+            // Start game with selected character
+            this.scene.start('GameScene', { 
+                characterId: this.selectedCharacter
+            });
+            
+            // IMPORTANT: Shutdown this scene completely
+            this.scene.stop();
+        }
+    });
+}
     
     /**
      * Create the start button
