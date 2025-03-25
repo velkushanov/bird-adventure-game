@@ -157,9 +157,9 @@ class GameScene extends Phaser.Scene {
         this.physics.add.collider(this.bird, this.enemies, this.hitEnemy, null, this);
         this.physics.add.overlap(this.bird, this.powerUps, this.collectPowerUp, null, this);
         
-        // Fireball collisions
-        this.physics.add.collider(this.fireballs, this.enemies, this.hitEnemyWithFireball, null, this);
-        this.physics.add.collider(this.fireballs, this.obstacles, this.hitObstacleWithFireball, null, this);
+        // Fireball collisions - use overlap instead of collider for more reliable detection
+        this.physics.add.overlap(this.fireballs, this.enemies, this.hitEnemyWithFireball, null, this);
+        this.physics.add.overlap(this.fireballs, this.obstacles, this.hitObstacleWithFireball, null, this);
     }
     
     /**
@@ -863,19 +863,46 @@ class GameScene extends Phaser.Scene {
      * @param {Phaser.GameObjects.Sprite} obstacle - The obstacle hit
      */
     hitObstacleWithFireball(fireball, obstacle) {
-        // Mark as destroyed to prevent double destruction
+        // Extra safeguards to prevent crashes
+        if (!fireball || !obstacle) return;
+        if (!fireball.active || !obstacle.active) return;
         if (fireball.destroyed) return;
         
-        fireball.destroyed = true;
-        
-        // Destroy fireball but not obstacle
-        fireball.destroy();
-        
-        // Play sound
-        this.sound.play('sfx-hit-obstacle', { volume: 0.5 });
-        
-        // Add impact effect
-        this.addImpactEffect(fireball.x, fireball.y);
+        try {
+            // Mark fireball as destroyed first to prevent multiple collisions
+            fireball.destroyed = true;
+            
+            // Play sound
+            this.sound.play('sfx-hit-obstacle', { volume: 0.5 });
+            
+            // Get positions before destroying
+            const fireballX = fireball.x;
+            const fireballY = fireball.y;
+            
+            // Create impact effect
+            this.addImpactEffect(fireballX, fireballY);
+            
+            // Check if obstacle can be damaged (for breakable obstacles)
+            if (obstacle.takeDamage && typeof obstacle.takeDamage === 'function') {
+                // Try to damage the obstacle
+                const wasDestroyed = obstacle.takeDamage(this.isBig ? 2 : 1);
+                
+                // If obstacle was destroyed, increase score
+                if (wasDestroyed) {
+                    this.increaseScore(CONFIG.BASE_OBSTACLE_POINTS);
+                }
+            }
+            
+            // Destroy fireball AFTER everything else
+            fireball.destroy();
+        } catch (error) {
+            console.error("Error in hitObstacleWithFireball:", error);
+            
+            // Last resort cleanup to prevent further issues
+            if (fireball && fireball.active) {
+                fireball.destroy();
+            }
+        }
     }
     
     /**
@@ -993,14 +1020,38 @@ class GameScene extends Phaser.Scene {
      * @param {number} y - Y position
      */
     addImpactEffect(x, y) {
-        // Create impact sprite
-        const impact = this.add.sprite(x, y, 'impact');
-        impact.play('impact-anim');
-        
-        // Remove after animation completes
-        impact.once('animationcomplete', () => {
-            impact.destroy();
-        });
+        try {
+            // Create impact sprite
+            const impact = this.add.sprite(x, y, 'impact');
+            
+            // Make sure the impact animation exists
+            if (!this.anims.exists('impact-anim')) {
+                this.anims.create({
+                    key: 'impact-anim',
+                    frames: this.anims.generateFrameNumbers('impact', { start: 0, end: 5 }),
+                    frameRate: 20,
+                    repeat: 0
+                });
+            }
+            
+            // Play the animation
+            impact.play('impact-anim');
+            
+            // Set proper depth
+            impact.setDepth(10);
+            
+            // Use Phaser's timer to ensure removal
+            this.time.addEvent({
+                delay: 300, // Animation duration
+                callback: () => {
+                    if (impact && impact.active) {
+                        impact.destroy();
+                    }
+                }
+            });
+        } catch (error) {
+            console.error("Error creating impact effect:", error);
+        }
     }
     
     /**
