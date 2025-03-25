@@ -146,6 +146,31 @@ class GameScene extends Phaser.Scene {
         
         // IMPORTANT: Give the bird access to the fireballs group
         this.bird.fireballs = this.fireballs;
+        
+        // NEW: Sync bird powerup state with game state
+        this.bird.on('powerup-mushroom-activated', () => {
+            console.log("Game: Mushroom powerup activated");
+            this.isBig = true;
+            if (this.bigIndicator) this.bigIndicator.setVisible(true);
+        });
+        
+        this.bird.on('powerup-mushroom-deactivated', () => {
+            console.log("Game: Mushroom powerup deactivated");
+            this.isBig = false;
+            if (this.bigIndicator) this.bigIndicator.setVisible(false);
+        });
+        
+        this.bird.on('powerup-flower-activated', () => {
+            console.log("Game: Flower powerup activated");
+            this.isShooting = true;
+            if (this.shootIndicator) this.shootIndicator.setVisible(true);
+        });
+        
+        this.bird.on('powerup-flower-deactivated', () => {
+            console.log("Game: Flower powerup deactivated");
+            this.isShooting = false;
+            if (this.shootIndicator) this.shootIndicator.setVisible(false);
+        });
     }
     
     /**
@@ -160,6 +185,52 @@ class GameScene extends Phaser.Scene {
         // Fireball collisions - use overlap instead of collider for more reliable detection
         this.physics.add.overlap(this.fireballs, this.enemies, this.hitEnemyWithFireball, null, this);
         this.physics.add.overlap(this.fireballs, this.obstacles, this.hitObstacleWithFireball, null, this);
+    }
+
+    hitEnemy(bird, enemy) {
+        // Don't process if game is already over or bird is invulnerable
+        if (this.isGameOver) return;
+        
+        // Check if bird is invulnerable from star powerup
+        if (bird.isInvulnerable) {
+            console.log("Bird is invulnerable - killing enemy instead");
+            
+            // Kill the enemy
+            if (enemy.takeDamage) {
+                enemy.takeDamage(999); // One-hit kill
+            } else {
+                enemy.destroy();
+            }
+            
+            // Add points
+            this.increaseScore(CONFIG.BASE_ENEMY_POINTS);
+            return;
+        }
+        
+        // Check if bird is big - it can defeat enemies when big
+        if (this.isBig) {
+            console.log("Big bird defeated enemy");
+            
+            // Kill the enemy
+            if (enemy.takeDamage) {
+                enemy.takeDamage(1);
+            } else {
+                enemy.destroy();
+            }
+            
+            // Add points
+            this.increaseScore(CONFIG.BASE_ENEMY_POINTS);
+            return;
+        }
+        
+        console.log("Bird hit enemy - game over");
+        
+        // Bird died - game over
+        if (bird.die) {
+            bird.die();
+        }
+        
+        this.gameOver();
     }
     
     /**
@@ -495,10 +566,19 @@ class GameScene extends Phaser.Scene {
      * Update obstacles position and check for off-screen
      * @param {number} delta - Delta time since last frame
      */
+
     updateObstacles(delta) {
+        // Get game speed for movement
         const moveAmount = this.gameSpeed * delta / 1000;
         
+        // Ensure the obstacles group exists
+        if (!this.obstacles) return;
+        
+        // Track how many obstacles were removed (for debugging)
+        let removedCount = 0;
+        
         this.obstacles.getChildren().forEach(obstacle => {
+            // Move obstacle
             obstacle.x -= moveAmount;
             
             // Check if obstacle passed bird (for scoring)
@@ -507,11 +587,17 @@ class GameScene extends Phaser.Scene {
                 obstacle.scored = true;
             }
             
-            // Remove if off screen
-            if (obstacle.x < -obstacle.width) {
+            // Remove if off screen (far left of screen)
+            if (obstacle.x < -obstacle.width * 2) {
                 obstacle.destroy();
+                removedCount++;
             }
         });
+        
+        // Debug log if we removed many obstacles at once
+        if (removedCount > 3) {
+            console.log(`Removed ${removedCount} off-screen obstacles`);
+        }
     }
     
     /**
@@ -761,56 +847,126 @@ class GameScene extends Phaser.Scene {
      * Activate mushroom power-up (size increase)
      */
     activateMushroom() {
-        // Set big flag
-        this.isBig = true;
-        this.bigIndicator.setVisible(true);
-        
-        // Increase bird size
-        this.bird.setScale(1.5);
-        
-        // Clear any existing mushroom timer
-        if (this.mushroomTimer) {
-            this.mushroomTimer.remove();
+        // Already big, just reset the timer
+        if (this.isBig) {
+            if (this.mushroomTimer) this.mushroomTimer.remove();
+            if (this.mushroomBlinkTimer) this.mushroomBlinkTimer.remove();
+            if (this.mushroomBlinkTween) this.mushroomBlinkTween.stop();
+        } else {
+            // Become big
+            this.isBig = true;
+            this.setScale(1.5);
+            
+            // Emit event to sync game state
+            this.scene.events.emit('powerup-mushroom-activated');
+            
+            // Play transformation sound
+            this.scene.sound.play('sfx-powerup', { volume: 0.7 });
+            
+            // Add growth effect
+            this.addGrowEffect();
         }
         
         // Set timer for power-up duration
-        this.mushroomTimer = this.time.delayedCall(CONFIG.MUSHROOM_DURATION, () => {
+        this.mushroomTimer = this.scene.time.delayedCall(CONFIG.MUSHROOM_DURATION, () => {
+            // Return to normal size
             this.isBig = false;
-            this.bird.setScale(1);
-            this.bigIndicator.setVisible(false);
+            this.setScale(1);
+            
+            // Emit event to sync game state
+            this.scene.events.emit('powerup-mushroom-deactivated');
+            
+            // Add shrink effect
+            this.addShrinkEffect();
+            
+            // Clear blinking effect
+            if (this.mushroomBlinkTween) {
+                this.mushroomBlinkTween.stop();
+                this.clearTint();
+                this.alpha = 1;
+            }
         }, [], this);
+        
+        // Add blinking timer at 1 second before expiration
+        if (CONFIG.MUSHROOM_DURATION > 1000) {
+            this.mushroomBlinkTimer = this.scene.time.delayedCall(CONFIG.MUSHROOM_DURATION - 1000, () => {
+                console.log("Starting mushroom expiration blink");
+                
+                // Start blinking effect
+                this.mushroomBlinkTween = this.scene.tweens.add({
+                    targets: this,
+                    alpha: 0.5,
+                    duration: 100,
+                    yoyo: true,
+                    repeat: 9, // 10 blinks in 1 second
+                    onComplete: () => {
+                        if (this.active) this.alpha = 1; // Reset alpha when done
+                    }
+                });
+            }, [], this);
+        }
     }
     
     /**
      * Activate flower power-up (shooting)
      */
     activateFlower() {
-        // Set shooting flag for the game scene
-        this.isShooting = true;
-        this.shootIndicator.setVisible(true);
-        this.lastFireTime = this.time.now;
-        
-        // Also set shooting flag for the bird (this is the key fix)
-        if (this.bird) {
-            this.bird.isShooting = true;
-            this.bird.lastFireballTime = this.time.now;
-        }
-        
-        // Clear any existing flower timer
-        if (this.flowerTimer) {
-            this.flowerTimer.remove();
+        // Already shooting, just reset the timer
+        if (this.isShooting) {
+            if (this.flowerTimer) this.flowerTimer.remove();
+            if (this.flowerBlinkTimer) this.flowerBlinkTimer.remove();
+            if (this.flowerBlinkTween) this.flowerBlinkTween.stop();
+        } else {
+            // Enable shooting
+            this.isShooting = true;
+            
+            // Emit event to sync game state
+            this.scene.events.emit('powerup-flower-activated');
+            
+            // Play power-up sound
+            this.scene.sound.play('sfx-powerup', { volume: 0.7 });
+            
+            // Add glow effect
+            this.addGlowEffect();
         }
         
         // Set timer for power-up duration
-        this.flowerTimer = this.time.delayedCall(CONFIG.FLOWER_DURATION, () => {
+        this.flowerTimer = this.scene.time.delayedCall(CONFIG.FLOWER_DURATION, () => {
+            // Disable shooting
             this.isShooting = false;
-            this.shootIndicator.setVisible(false);
             
-            // Also update bird's state
-            if (this.bird) {
-                this.bird.isShooting = false;
+            // Emit event to sync game state
+            this.scene.events.emit('powerup-flower-deactivated');
+            
+            // Remove glow effect
+            this.removeGlowEffect();
+            
+            // Clear blinking effect
+            if (this.flowerBlinkTween) {
+                this.flowerBlinkTween.stop();
+                this.clearTint();
+                this.alpha = 1;
             }
         }, [], this);
+        
+        // Add blinking timer at 1 second before expiration
+        if (CONFIG.FLOWER_DURATION > 1000) {
+            this.flowerBlinkTimer = this.scene.time.delayedCall(CONFIG.FLOWER_DURATION - 1000, () => {
+                console.log("Starting flower expiration blink");
+                
+                // Start blinking effect
+                this.flowerBlinkTween = this.scene.tweens.add({
+                    targets: this,
+                    alpha: 0.5,
+                    duration: 100,
+                    yoyo: true,
+                    repeat: 9, // 10 blinks in 1 second
+                    onComplete: () => {
+                        if (this.active) this.alpha = 1; // Reset alpha when done
+                    }
+                });
+            }, [], this);
+        }
     }
     
     /**
@@ -862,47 +1018,34 @@ class GameScene extends Phaser.Scene {
      * @param {Phaser.GameObjects.Sprite} fireball - The fireball
      * @param {Phaser.GameObjects.Sprite} obstacle - The obstacle hit
      */
-    hitObstacleWithFireball(fireball, obstacle) {
-        // Extra safeguards to prevent crashes
-        if (!fireball || !obstacle) return;
-        if (!fireball.active || !obstacle.active) return;
-        if (fireball.destroyed) return;
+    hitObstacle(bird, obstacle) {
+        // Don't process if game is already over or bird is invulnerable
+        if (this.isGameOver) return;
         
-        try {
-            // Mark fireball as destroyed first to prevent multiple collisions
-            fireball.destroyed = true;
-            
-            // Play sound
-            this.sound.play('sfx-hit-obstacle', { volume: 0.5 });
-            
-            // Get positions before destroying
-            const fireballX = fireball.x;
-            const fireballY = fireball.y;
-            
-            // Create impact effect
-            this.addImpactEffect(fireballX, fireballY);
-            
-            // Check if obstacle can be damaged (for breakable obstacles)
-            if (obstacle.takeDamage && typeof obstacle.takeDamage === 'function') {
-                // Try to damage the obstacle
-                const wasDestroyed = obstacle.takeDamage(this.isBig ? 2 : 1);
-                
-                // If obstacle was destroyed, increase score
-                if (wasDestroyed) {
-                    this.increaseScore(CONFIG.BASE_OBSTACLE_POINTS);
-                }
-            }
-            
-            // Destroy fireball AFTER everything else
-            fireball.destroy();
-        } catch (error) {
-            console.error("Error in hitObstacleWithFireball:", error);
-            
-            // Last resort cleanup to prevent further issues
-            if (fireball && fireball.active) {
-                fireball.destroy();
+        // Check if bird is invulnerable from star powerup
+        if (bird.isInvulnerable) {
+            console.log("Bird is invulnerable - obstacle hit ignored");
+            return;
+        }
+        
+        // Check if bird is big - if so, it can break some obstacles
+        if (this.isBig && obstacle.takeDamage) {
+            const wasDestroyed = obstacle.takeDamage(1);
+            if (wasDestroyed) {
+                // Obstacle was destroyed, bird survives
+                this.increaseScore(CONFIG.BIG_OBSTACLE_POINTS);
+                return;
             }
         }
+        
+        console.log("Bird hit obstacle - game over");
+        
+        // Bird died - game over
+        if (bird.die) {
+            bird.die();
+        }
+        
+        this.gameOver();
     }
     
     /**
