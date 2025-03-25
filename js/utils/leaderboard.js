@@ -1,6 +1,7 @@
 /**
- * Leaderboard.js Utility Functions
+ * Leaderboard.js
  * Provides helper functions for working with leaderboards
+ * Compatible with Firebase v9 SDK exposed through window.firebaseFunctions
  */
 
 /**
@@ -10,58 +11,43 @@
  * @returns {Promise<Array>} Array of score objects sorted by score
  */
 function getTopScores(limit = 10, timeframe = 'all') {
-    if (!firebaseDb) {
-        console.error('Firebase not initialized');
-        return Promise.resolve([]);
-    }
-
-    let query;
-    
-    if (timeframe === 'daily') {
-        // Get today's date
-        const today = new Date().toISOString().split('T')[0];
-        query = firebaseDb.collection('leaderboard_daily')
-            .doc(today)
-            .collection('scores')
-            .orderBy('score', 'desc')
-            .limit(limit);
-    } else if (timeframe === 'weekly') {
-        // Get current week
-        const now = new Date();
-        const weekNum = getWeekNumber(now);
-        const weekStr = `${now.getFullYear()}-W${weekNum}`;
-        
-        query = firebaseDb.collection('leaderboard_weekly')
-            .doc(weekStr)
-            .collection('scores')
-            .orderBy('score', 'desc')
-            .limit(limit);
-    } else {
-        // All time scores
-        query = firebaseDb.collection('leaderboard')
-            .orderBy('score', 'desc')
-            .limit(limit);
-    }
-    
-    return query.get()
-        .then(snapshot => {
-            const scores = [];
-            snapshot.forEach(doc => {
-                const data = doc.data();
-                scores.push({
-                    id: doc.id,
-                    name: data.name || 'Unknown Player',
-                    score: data.score || 0,
-                    userId: data.userId,
-                    timestamp: data.timestamp ? data.timestamp.toDate() : new Date()
+    return new Promise((resolve, reject) => {
+        ensureFirebaseLoaded(() => {
+            let constraints = [
+                window.firebaseFunctions.orderBy('score', 'desc'),
+                window.firebaseFunctions.limit(limit)
+            ];
+            
+            let collectionPath = 'leaderboard';
+            
+            if (timeframe === 'daily') {
+                // Get today's date
+                const today = new Date().toISOString().split('T')[0];
+                collectionPath = `leaderboard_daily/${today}/scores`;
+            } else if (timeframe === 'weekly') {
+                // Get current week
+                const now = new Date();
+                const weekNum = getWeekNumber(now);
+                const weekStr = `${now.getFullYear()}-W${weekNum}`;
+                collectionPath = `leaderboard_weekly/${weekStr}/scores`;
+            }
+            
+            window.firebaseFunctions.getCollection(collectionPath, constraints)
+                .then(scores => {
+                    resolve(scores.map(score => ({
+                        id: score.id,
+                        name: score.name || 'Unknown Player',
+                        score: score.score || 0,
+                        userId: score.userId,
+                        timestamp: score.timestamp ? new Date(score.timestamp.seconds * 1000) : new Date()
+                    })));
+                })
+                .catch(error => {
+                    console.error('Error getting top scores:', error);
+                    resolve([]);
                 });
-            });
-            return scores;
-        })
-        .catch(error => {
-            console.error('Error getting top scores:', error);
-            return [];
         });
+    });
 }
 
 /**
@@ -71,48 +57,35 @@ function getTopScores(limit = 10, timeframe = 'all') {
  * @returns {Promise<number>} User's rank (position)
  */
 function getUserRanking(score, timeframe = 'all') {
-    if (!firebaseDb) {
-        console.error('Firebase not initialized');
-        return Promise.resolve(0);
-    }
-    
-    let query;
-    
-    if (timeframe === 'daily') {
-        // Get today's date
-        const today = new Date().toISOString().split('T')[0];
-        query = firebaseDb.collection('leaderboard_daily')
-            .doc(today)
-            .collection('scores')
-            .where('score', '>', score)
-            .count();
-    } else if (timeframe === 'weekly') {
-        // Get current week
-        const now = new Date();
-        const weekNum = getWeekNumber(now);
-        const weekStr = `${now.getFullYear()}-W${weekNum}`;
-        
-        query = firebaseDb.collection('leaderboard_weekly')
-            .doc(weekStr)
-            .collection('scores')
-            .where('score', '>', score)
-            .count();
-    } else {
-        // All time scores
-        query = firebaseDb.collection('leaderboard')
-            .where('score', '>', score)
-            .count();
-    }
-    
-    return query.get()
-        .then(snapshot => {
-            // Return rank (number of players with higher score + 1)
-            return snapshot.data().count + 1;
-        })
-        .catch(error => {
-            console.error('Error getting user ranking:', error);
-            return 0;
+    return new Promise((resolve, reject) => {
+        ensureFirebaseLoaded(() => {
+            let collectionPath = 'leaderboard';
+            
+            if (timeframe === 'daily') {
+                const today = new Date().toISOString().split('T')[0];
+                collectionPath = `leaderboard_daily/${today}/scores`;
+            } else if (timeframe === 'weekly') {
+                const now = new Date();
+                const weekNum = getWeekNumber(now);
+                const weekStr = `${now.getFullYear()}-W${weekNum}`;
+                collectionPath = `leaderboard_weekly/${weekStr}/scores`;
+            }
+            
+            const constraints = [
+                window.firebaseFunctions.where('score', '>', score)
+            ];
+            
+            window.firebaseFunctions.getCollection(collectionPath, constraints)
+                .then(higherScores => {
+                    // Return rank (number of players with higher score + 1)
+                    resolve(higherScores.length + 1);
+                })
+                .catch(error => {
+                    console.error('Error getting user ranking:', error);
+                    resolve(0);
+                });
         });
+    });
 }
 
 /**
@@ -122,32 +95,34 @@ function getUserRanking(score, timeframe = 'all') {
  * @returns {Promise<Array>} Array of score objects for the user
  */
 function getUserScoreHistory(userId, limit = 10) {
-    if (!firebaseDb || !userId) {
-        console.error('Firebase not initialized or invalid userId');
-        return Promise.resolve([]);
-    }
-    
-    return firebaseDb.collection('leaderboard')
-        .where('userId', '==', userId)
-        .orderBy('timestamp', 'desc')
-        .limit(limit)
-        .get()
-        .then(snapshot => {
-            const scores = [];
-            snapshot.forEach(doc => {
-                const data = doc.data();
-                scores.push({
-                    id: doc.id,
-                    score: data.score || 0,
-                    timestamp: data.timestamp ? data.timestamp.toDate() : new Date()
+    return new Promise((resolve, reject) => {
+        ensureFirebaseLoaded(() => {
+            if (!userId) {
+                console.error('Invalid userId');
+                resolve([]);
+                return;
+            }
+            
+            const constraints = [
+                window.firebaseFunctions.where('userId', '==', userId),
+                window.firebaseFunctions.orderBy('timestamp', 'desc'),
+                window.firebaseFunctions.limit(limit)
+            ];
+            
+            window.firebaseFunctions.getCollection('leaderboard', constraints)
+                .then(scores => {
+                    resolve(scores.map(score => ({
+                        id: score.id,
+                        score: score.score || 0,
+                        timestamp: score.timestamp ? new Date(score.timestamp.seconds * 1000) : new Date()
+                    })));
+                })
+                .catch(error => {
+                    console.error('Error getting user score history:', error);
+                    resolve([]);
                 });
-            });
-            return scores;
-        })
-        .catch(error => {
-            console.error('Error getting user score history:', error);
-            return [];
         });
+    });
 }
 
 /**
@@ -156,60 +131,45 @@ function getUserScoreHistory(userId, limit = 10) {
  * @returns {Promise<Object>} Statistics object
  */
 function getLeaderboardStats(timeframe = 'all') {
-    if (!firebaseDb) {
-        console.error('Firebase not initialized');
-        return Promise.resolve({});
-    }
-    
-    let query;
-    
-    if (timeframe === 'daily') {
-        // Get today's date
-        const today = new Date().toISOString().split('T')[0];
-        query = firebaseDb.collection('leaderboard_daily')
-            .doc(today)
-            .collection('scores');
-    } else if (timeframe === 'weekly') {
-        // Get current week
-        const now = new Date();
-        const weekNum = getWeekNumber(now);
-        const weekStr = `${now.getFullYear()}-W${weekNum}`;
-        
-        query = firebaseDb.collection('leaderboard_weekly')
-            .doc(weekStr)
-            .collection('scores');
-    } else {
-        // All time scores
-        query = firebaseDb.collection('leaderboard');
-    }
-    
-    return query.get()
-        .then(snapshot => {
-            const scores = [];
-            snapshot.forEach(doc => {
-                const data = doc.data();
-                scores.push(data.score || 0);
-            });
+    return new Promise((resolve, reject) => {
+        ensureFirebaseLoaded(() => {
+            let collectionPath = 'leaderboard';
             
-            // Calculate statistics
-            const count = scores.length;
-            const total = scores.reduce((sum, score) => sum + score, 0);
-            const average = count > 0 ? total / count : 0;
-            const highest = count > 0 ? Math.max(...scores) : 0;
-            const lowest = count > 0 ? Math.min(...scores) : 0;
+            if (timeframe === 'daily') {
+                const today = new Date().toISOString().split('T')[0];
+                collectionPath = `leaderboard_daily/${today}/scores`;
+            } else if (timeframe === 'weekly') {
+                const now = new Date();
+                const weekNum = getWeekNumber(now);
+                const weekStr = `${now.getFullYear()}-W${weekNum}`;
+                collectionPath = `leaderboard_weekly/${weekStr}/scores`;
+            }
             
-            return {
-                count,
-                total,
-                average,
-                highest,
-                lowest
-            };
-        })
-        .catch(error => {
-            console.error('Error getting leaderboard stats:', error);
-            return {};
+            window.firebaseFunctions.getCollection(collectionPath, [])
+                .then(scores => {
+                    const scoreValues = scores.map(s => s.score || 0);
+                    
+                    // Calculate statistics
+                    const count = scoreValues.length;
+                    const total = scoreValues.reduce((sum, score) => sum + score, 0);
+                    const average = count > 0 ? total / count : 0;
+                    const highest = count > 0 ? Math.max(...scoreValues) : 0;
+                    const lowest = count > 0 ? Math.min(...scoreValues) : 0;
+                    
+                    resolve({
+                        count,
+                        total,
+                        average,
+                        highest,
+                        lowest
+                    });
+                })
+                .catch(error => {
+                    console.error('Error getting leaderboard stats:', error);
+                    resolve({});
+                });
         });
+    });
 }
 
 /**
@@ -223,4 +183,16 @@ function getWeekNumber(date) {
     d.setUTCDate(d.getUTCDate() + 4 - dayNum);
     const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
     return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+}
+
+/**
+ * Ensure Firebase is loaded before executing code
+ * @param {Function} callback - Function to execute when Firebase is loaded
+ */
+function ensureFirebaseLoaded(callback) {
+    if (window.firebaseLoaded) {
+        callback();
+    } else {
+        document.addEventListener('firebaseLoaded', callback);
+    }
 }

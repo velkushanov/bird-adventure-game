@@ -1,28 +1,32 @@
 /**
  * Firebase.js
  * Handles Firebase initialization and core functionality
+ * This version works with the Firebase v9 SDK (exposed via window.firebaseFunctions)
  */
 
-// Firebase app instance
-let firebaseApp = null;
-let firebaseAuth = null;
-let firebaseDb = null;
-let firebaseRtdb = null;
+// User data
 let currentUser = null;
+
+/**
+ * Wait for Firebase to load before initializing
+ */
+function ensureFirebaseLoaded(callback) {
+    if (window.firebaseLoaded) {
+        callback();
+    } else {
+        document.addEventListener('firebaseLoaded', callback);
+    }
+}
 
 /**
  * Initialize Firebase with configuration
  */
 function initializeFirebase() {
-    // Initialize Firebase only if not already initialized
-    if (!firebaseApp) {
-        firebaseApp = firebase.initializeApp(CONFIG.FIREBASE);
-        firebaseAuth = firebase.auth();
-        firebaseDb = firebase.firestore();
-        firebaseRtdb = firebase.database();
+    ensureFirebaseLoaded(() => {
+        console.log('Firebase initialized');
         
         // Set up auth state listener
-        firebaseAuth.onAuthStateChanged(user => {
+        window.firebaseFunctions.onAuthStateChanged((user) => {
             if (user) {
                 // User is signed in
                 currentUser = {
@@ -33,11 +37,11 @@ function initializeFirebase() {
                 };
                 
                 // Create or update user document in Firestore
-                firebaseDb.collection('users').doc(user.uid).set({
+                window.firebaseFunctions.setDocument('users', user.uid, {
                     displayName: user.displayName || 'Player',
                     email: user.email,
                     photoURL: user.photoURL,
-                    lastLogin: firebase.firestore.FieldValue.serverTimestamp()
+                    lastLogin: window.firebaseFunctions.serverTimestamp()
                 }, { merge: true });
                 
                 console.log('User signed in:', currentUser.displayName);
@@ -47,7 +51,7 @@ function initializeFirebase() {
                 console.log('User signed out');
             }
         });
-    }
+    });
 }
 
 /**
@@ -71,7 +75,7 @@ function getCurrentUser() {
  * @returns {Promise} Promise that resolves when sign out is complete
  */
 function signOut() {
-    return firebaseAuth.signOut()
+    return window.firebaseFunctions.signOut()
         .then(() => {
             console.log('User signed out successfully');
         })
@@ -92,44 +96,45 @@ function saveScore(score) {
     }
     
     const userId = currentUser.uid;
-    const userRef = firebaseDb.collection('users').doc(userId);
     
     // First get the user document to check their high score
-    return userRef.get()
-        .then(doc => {
+    return window.firebaseFunctions.getDocument('users', userId)
+        .then(docSnapshot => {
             let highScore = 0;
+            let userData = {};
             
-            if (doc.exists) {
-                // Get current high score
-                highScore = doc.data().highScore || 0;
+            if (docSnapshot.exists()) {
+                // Get existing data
+                userData = docSnapshot.data();
+                highScore = userData.highScore || 0;
                 
                 // Only update if new score is higher
                 if (score > highScore) {
                     highScore = score;
                     
                     // Update user document with new high score
-                    userRef.update({
+                    window.firebaseFunctions.updateDocument('users', userId, {
                         highScore: highScore,
-                        lastPlayed: firebase.firestore.FieldValue.serverTimestamp()
+                        lastPlayed: window.firebaseFunctions.serverTimestamp()
                     });
                     
                     // Add score to global leaderboard
                     addScoreToLeaderboard(score);
                 } else {
                     // Just update lastPlayed
-                    userRef.update({
-                        lastPlayed: firebase.firestore.FieldValue.serverTimestamp()
+                    window.firebaseFunctions.updateDocument('users', userId, {
+                        lastPlayed: window.firebaseFunctions.serverTimestamp()
                     });
                 }
             } else {
                 // User document doesn't exist, create it
                 highScore = score;
-                userRef.set({
+                window.firebaseFunctions.setDocument('users', userId, {
                     displayName: currentUser.displayName,
                     email: currentUser.email,
                     photoURL: currentUser.photoURL,
                     highScore: score,
-                    lastPlayed: firebase.firestore.FieldValue.serverTimestamp()
+                    lastPlayed: window.firebaseFunctions.serverTimestamp()
                 });
                 
                 // Add score to global leaderboard
@@ -156,20 +161,20 @@ function addScoreToLeaderboard(score) {
     const playerName = currentUser.displayName || 'Player';
     
     // Add to global leaderboard
-    firebaseDb.collection('leaderboard').add({
+    window.firebaseFunctions.addDocument('leaderboard', {
         userId: userId,
         name: playerName,
         score: score,
-        timestamp: firebase.firestore.FieldValue.serverTimestamp()
+        timestamp: window.firebaseFunctions.serverTimestamp()
     });
     
     // Add to daily leaderboard
     const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
-    firebaseDb.collection('leaderboard_daily').doc(dateStr).collection('scores').add({
+    window.firebaseFunctions.addDocument(`leaderboard_daily/${dateStr}/scores`, {
         userId: userId,
         name: playerName,
         score: score,
-        timestamp: firebase.firestore.FieldValue.serverTimestamp()
+        timestamp: window.firebaseFunctions.serverTimestamp()
     });
     
     // Add to weekly leaderboard
@@ -177,11 +182,11 @@ function addScoreToLeaderboard(score) {
     const weekNum = getWeekNumber(now);
     const weekStr = `${now.getFullYear()}-W${weekNum}`;
     
-    firebaseDb.collection('leaderboard_weekly').doc(weekStr).collection('scores').add({
+    window.firebaseFunctions.addDocument(`leaderboard_weekly/${weekStr}/scores`, {
         userId: userId,
         name: playerName,
         score: score,
-        timestamp: firebase.firestore.FieldValue.serverTimestamp()
+        timestamp: window.firebaseFunctions.serverTimestamp()
     });
 }
 
@@ -205,52 +210,40 @@ function getWeekNumber(date) {
  * @returns {Promise<Array>} Promise that resolves with array of score objects
  */
 function getTopScores(limit = 10, timeframe = 'all') {
-    let query;
-    
-    if (timeframe === 'daily') {
-        // Get today's date
-        const today = new Date().toISOString().split('T')[0];
-        query = firebaseDb.collection('leaderboard_daily')
-            .doc(today)
-            .collection('scores')
-            .orderBy('score', 'desc')
-            .limit(limit);
-    } else if (timeframe === 'weekly') {
-        // Get current week
-        const now = new Date();
-        const weekNum = getWeekNumber(now);
-        const weekStr = `${now.getFullYear()}-W${weekNum}`;
+    ensureFirebaseLoaded(() => {
+        let constraints = [
+            window.firebaseFunctions.orderBy('score', 'desc'),
+            window.firebaseFunctions.limit(limit)
+        ];
         
-        query = firebaseDb.collection('leaderboard_weekly')
-            .doc(weekStr)
-            .collection('scores')
-            .orderBy('score', 'desc')
-            .limit(limit);
-    } else {
-        // All time scores
-        query = firebaseDb.collection('leaderboard')
-            .orderBy('score', 'desc')
-            .limit(limit);
-    }
-    
-    return query.get()
-        .then(snapshot => {
-            const scores = [];
-            snapshot.forEach(doc => {
-                const data = doc.data();
-                scores.push({
-                    id: doc.id,
-                    name: data.name,
-                    score: data.score,
-                    timestamp: data.timestamp ? data.timestamp.toDate() : new Date()
-                });
+        let collectionPath = 'leaderboard';
+        
+        if (timeframe === 'daily') {
+            // Get today's date
+            const today = new Date().toISOString().split('T')[0];
+            collectionPath = `leaderboard_daily/${today}/scores`;
+        } else if (timeframe === 'weekly') {
+            // Get current week
+            const now = new Date();
+            const weekNum = getWeekNumber(now);
+            const weekStr = `${now.getFullYear()}-W${weekNum}`;
+            collectionPath = `leaderboard_weekly/${weekStr}/scores`;
+        }
+        
+        return window.firebaseFunctions.getCollection(collectionPath, constraints)
+            .then(scores => {
+                return scores.map(score => ({
+                    id: score.id,
+                    name: score.name || 'Unknown Player',
+                    score: score.score || 0,
+                    timestamp: score.timestamp ? new Date(score.timestamp.seconds * 1000) : new Date()
+                }));
+            })
+            .catch(error => {
+                console.error('Error getting top scores:', error);
+                return [];
             });
-            return scores;
-        })
-        .catch(error => {
-            console.error('Error getting top scores:', error);
-            return [];
-        });
+    });
 }
 
 /**
@@ -259,23 +252,26 @@ function getTopScores(limit = 10, timeframe = 'all') {
  * @returns {Promise<number>} Promise that resolves with user's high score
  */
 function getUserHighScore(userId = null) {
-    const uid = userId || (currentUser ? currentUser.uid : null);
-    
-    if (!uid) {
-        return Promise.resolve(0);
-    }
-    
-    return firebaseDb.collection('users').doc(uid).get()
-        .then(doc => {
-            if (doc.exists) {
-                return doc.data().highScore || 0;
-            }
-            return 0;
-        })
-        .catch(error => {
-            console.error('Error getting user high score:', error);
-            return 0;
-        });
+    ensureFirebaseLoaded(() => {
+        const uid = userId || (currentUser ? currentUser.uid : null);
+        
+        if (!uid) {
+            return Promise.resolve(0);
+        }
+        
+        return window.firebaseFunctions.getDocument('users', uid)
+            .then(docSnapshot => {
+                if (docSnapshot.exists()) {
+                    const userData = docSnapshot.data();
+                    return userData.highScore || 0;
+                }
+                return 0;
+            })
+            .catch(error => {
+                console.error('Error getting user high score:', error);
+                return 0;
+            });
+    });
 }
 
 /**
@@ -283,17 +279,19 @@ function getUserHighScore(userId = null) {
  * @param {string} status - Player status ('menu', 'playing', 'waiting')
  */
 function updatePlayerStatus(status) {
-    if (!isAuthenticated()) return;
-    
-    const userId = currentUser.uid;
-    const statusRef = firebaseRtdb.ref(`players/${userId}/status`);
-    
-    // Update status
-    statusRef.set({
-        status: status,
-        lastUpdated: firebase.database.ServerValue.TIMESTAMP
+    ensureFirebaseLoaded(() => {
+        if (!isAuthenticated()) return;
+        
+        const userId = currentUser.uid;
+        const statusPath = `players/${userId}/status`;
+        
+        // Update status
+        window.firebaseFunctions.setData(statusPath, {
+            status: status,
+            lastUpdated: Date.now()
+        });
+        
+        // Remove data when disconnected
+        // Note: This is handled differently in Firebase v9 and would require server-side onDisconnect functionality
     });
-    
-    // Set up cleanup on disconnect
-    statusRef.onDisconnect().remove();
 }
